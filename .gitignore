@@ -1,0 +1,31 @@
+# Flutter
+/build/
+/.flutter-cache/
+*.laczo
+*.pub-cache/
+*.pubPECK
+*.pubpackages
+*.localizations
+
+# General
+.env.*
+*.laczo
+*.DS_Store
+*.swp
+*.swo
+*.log
+*.tmp
+*.bak
+*.orig
+node_modules/
+.babel-cache/
+coverage/
+DSYM/
+.debug/
+is instrumenting/
+
+# Hidden directories (folders starting with .)
+.*/
+
+# Exception: never ignore .git directory
+!.git/

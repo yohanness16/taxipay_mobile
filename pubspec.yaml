@@ -1,0 +1,58 @@
+name: telebirr_driver_assistant
+description: Offline-first driver assistant for tracking Telebirr ride payments, subscriptions, and expenses.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  csv: ^6.0.0
+  share_plus: ^11.1.0
+  url_launcher: ^6.3.1
+  flutter_overlay_window: ^0.5.0
+  audioplayers: ^6.1.0
+
+  # State management
+  provider: ^6.1.2
+
+  # Local database
+  sqflite: ^2.4.1
+  path: ^1.9.0
+  path_provider: ^2.1.5
+
+  # Secure storage for JWT / secrets
+  flutter_secure_storage: ^9.2.2
+
+  # SMS reading (Android only — see README for permission setup)
+  telephony: ^0.2.0
+  permission_handler: ^11.3.1
+
+  # Networking
+  http: ^1.2.2
+  connectivity_plus: ^6.1.1
+
+  # Notifications (subscription reminders, lockout warnings)
+  flutter_local_notifications: ^18.0.1
+
+  # Charts for the analytics/reports screen
+  fl_chart: ^0.69.2
+
+  # Formatting
+  intl: ^0.19.0
+
+  # PDF earnings report (shareable with vehicle owner, accountant, etc.)
+  pdf: ^3.11.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/
