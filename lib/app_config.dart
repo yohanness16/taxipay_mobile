@@ -7,7 +7,7 @@ class AppConfig {
     defaultValue: 'https://taxipay-eight.vercel.app/api',
   );
 
-  static const double monthlySubscriptionFeeEtb = 100.0;
+  static const double monthlySubscriptionFeeEtb = 50.0;
   static const int subscriptionDurationDays = 30;
   static const int trialDays = 7;
 
