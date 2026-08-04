@@ -7,6 +7,7 @@ import '../services/overlay_service.dart';
 import '../services/sms_reader.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/modern_widgets.dart';
 import 'main_shell.dart';
 
 /// Shown exactly once, right after registration/first login: walks the
@@ -100,11 +101,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
 
   Future<void> _requestSms() async {
     final granted = await context.read<SmsReader>().requestPermissions();
+    if (!mounted) return;
     setState(() => _smsGranted = granted);
   }
 
   Future<void> _requestNotifications() async {
     final granted = await context.read<OverlayService>().requestNotificationPermission();
+    if (!mounted) return;
     setState(() => _notifGranted = granted);
   }
 
@@ -121,13 +124,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
     }
     if (!mounted) return;
     final granted = await overlay.isPermissionGranted();
+    if (!mounted) return;
     setState(() => _overlayGranted = granted);
   }
 
   Future<void> _next() async {
     if (_page < _steps.length - 1) {
       setState(() => _page++);
-      _pageController.nextPage(duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+      _pageController.nextPage(duration: AppTheme.dBase, curve: AppTheme.ease);
     } else {
       await _finish();
     }
@@ -136,6 +140,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
   Future<void> _finish() async {
     setState(() => _busy = true);
     await DatabaseHelper.instance.setSetting(OnboardingScreen._doneKey, 'true');
+    if (!mounted) return;
     final overlay = context.read<OverlayService>();
     if (await overlay.isPermissionGranted()) {
       await overlay.start();
@@ -148,6 +153,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
   Widget build(BuildContext context) {
     final strings = context.watch<AppStrings>();
     final step = _steps[_page];
+
+    // This flow is intentionally always dark — it renders before the driver
+    // reaches the themed shell — so the neutrals here are pinned to the
+    // dark-surface palette rather than read off the ambient brightness.
     return Scaffold(
       backgroundColor: AppTheme.surfaceDark,
       body: DecoratedBox(
@@ -161,34 +170,40 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
         child: SafeArea(
           child: Column(
             children: [
-              const SizedBox(height: 20),
-              const AppLogo(size: 60),
-              const SizedBox(height: 10),
-              Text(
-                'Telebirr Driver Assistant',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.2,
-                    ),
+              const SizedBox(height: AppTheme.s5),
+              const FadeSlideIn(index: 0, child: AppLogo(size: 60)),
+              const SizedBox(height: AppTheme.s3),
+              FadeSlideIn(
+                index: 1,
+                child: Text(
+                  'Telebirr Driver Assistant',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                ),
               ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _steps.length,
-                  (i) => AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    width: i == _page ? 26 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: i <= _page ? AppTheme.primary : Colors.white.withOpacity(0.14),
-                      borderRadius: BorderRadius.circular(4),
-                      boxShadow: i == _page
-                          ? [BoxShadow(color: AppTheme.primary.withOpacity(0.5), blurRadius: 8)]
-                          : null,
+              const SizedBox(height: AppTheme.s5),
+              FadeSlideIn(
+                index: 2,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    _steps.length,
+                    (i) => AnimatedContainer(
+                      duration: AppTheme.dBase,
+                      curve: AppTheme.ease,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: i == _page ? 26 : AppTheme.s2,
+                      height: AppTheme.s2,
+                      decoration: BoxDecoration(
+                        color: i <= _page ? AppTheme.primary : Colors.white.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(AppTheme.s1),
+                        boxShadow: i == _page
+                            ? AppTheme.shadow(tint: AppTheme.primary, opacity: 0.5, blur: 8, y: 0)
+                            : null,
+                      ),
                     ),
                   ),
                 ),
@@ -202,52 +217,52 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+                padding: const EdgeInsets.fromLTRB(AppTheme.s6, 0, AppTheme.s6, AppTheme.s8),
                 child: Column(
                   children: [
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: FilledButton(
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                              if (step.granted()) {
-                                await _next();
-                                return;
-                              }
-                              setState(() => _busy = true);
-                              await step.action();
-                              if (mounted) setState(() => _busy = false);
-                            },
-                      child: _busy
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
-                            )
-                          : Text(
-                              step.granted() ? strings.t('continue_label') : strings.t('allow_and_continue'),
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                            ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: FilledButton(
+                        onPressed: _busy
+                            ? null
+                            : () async {
+                                if (step.granted()) {
+                                  await _next();
+                                  return;
+                                }
+                                setState(() => _busy = true);
+                                await step.action();
+                                if (mounted) setState(() => _busy = false);
+                              },
+                        child: _busy
+                            ? const SizedBox(
+                                height: AppTheme.s5,
+                                width: AppTheme.s5,
+                                child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.black),
+                              )
+                            : Text(
+                                step.granted() ? strings.t('continue_label') : strings.t('allow_and_continue'),
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                              ),
+                      ),
                     ),
-                  ),
-                  if (step.granted())
-                    TextButton(
-                      onPressed: _busy ? null : _next,
-                      child: Text(strings.t('next'), style: const TextStyle(color: Colors.white60)),
-                    )
-                  else
-                    TextButton(
-                      onPressed: _busy ? null : _next,
-                      child: Text(strings.t('skip_for_now'), style: const TextStyle(color: Colors.white38)),
-                    ),
-                ],
+                    if (step.granted())
+                      TextButton(
+                        onPressed: _busy ? null : _next,
+                        child: Text(strings.t('next'), style: const TextStyle(color: Colors.white60)),
+                      )
+                    else
+                      TextButton(
+                        onPressed: _busy ? null : _next,
+                        child: Text(strings.t('skip_for_now'), style: const TextStyle(color: Colors.white38)),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -272,14 +287,14 @@ class _StepView extends StatelessWidget {
     return TweenAnimationBuilder<double>(
       key: ValueKey(step.titleKey),
       tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOutCubic,
+      duration: AppTheme.dSlow,
+      curve: AppTheme.ease,
       builder: (context, t, child) => Opacity(
         opacity: t,
-        child: Transform.translate(offset: Offset(0, (1 - t) * 16), child: child),
+        child: Transform.translate(offset: Offset(0, (1 - t) * AppTheme.s4), child: child),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.s8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -291,44 +306,56 @@ class _StepView extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [AppTheme.primary.withOpacity(0.22), AppTheme.primaryDark.withOpacity(0.06)],
+                  colors: [
+                    AppTheme.primary.withValues(alpha: 0.22),
+                    AppTheme.primaryDark.withValues(alpha: 0.06),
+                  ],
                 ),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-                boxShadow: [BoxShadow(color: AppTheme.primary.withOpacity(0.18), blurRadius: 28, spreadRadius: 2)],
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primary.withValues(alpha: 0.18),
+                    blurRadius: 28,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
               child: Icon(step.icon, size: 44, color: AppTheme.primary),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: AppTheme.s8),
             Text(
               strings.t(step.titleKey),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800, height: 1.25),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppTheme.s3),
             Text(
               strings.t(step.bodyKey),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withOpacity(0.62), fontSize: 14.5, height: 1.55),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.62), fontSize: 14.5, height: 1.55),
             ),
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 260),
+              duration: AppTheme.dBase,
               child: step.granted()
                   ? Padding(
                       key: const ValueKey('granted'),
-                      padding: const EdgeInsets.only(top: 22),
+                      padding: const EdgeInsets.only(top: AppTheme.s6),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: AppTheme.s4, vertical: AppTheme.s2),
                         decoration: BoxDecoration(
-                          color: AppTheme.primary.withOpacity(0.14),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: AppTheme.primary.withOpacity(0.4)),
+                          color: AppTheme.primary.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(AppTheme.rLg),
+                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
                         ),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.check_circle_rounded, color: AppTheme.primary, size: 18),
-                            SizedBox(width: 6),
-                            Text('Granted', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+                            SizedBox(width: AppTheme.s2),
+                            Text(
+                              'Granted',
+                              style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13),
+                            ),
                           ],
                         ),
                       ),

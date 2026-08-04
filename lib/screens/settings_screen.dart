@@ -10,7 +10,9 @@ import '../services/overlay_service.dart';
 import '../services/ride_manager.dart';
 import '../services/sms_reader.dart';
 import '../services/subscription_manager.dart';
+import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
+import '../widgets/modern_widgets.dart';
 import 'registration_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -62,12 +64,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<void> _load() async {
     final auth = context.read<AuthService>();
     final driverSettings = context.read<DriverSettingsService>();
+    final subscriptions = context.read<SubscriptionManager>();
+    final smsReader = context.read<SmsReader>();
     final name = await auth.name;
     final phone = await auth.phone;
-    final subscription = await context.read<SubscriptionManager>().checkSubscriptionStatus(phone ?? '');
+    final subscription = await subscriptions.checkSubscriptionStatus(phone ?? '');
     final goal = await driverSettings.getDailyGoal();
     final interval = await driverSettings.getServiceIntervalKm();
-    final smsGranted = await context.read<SmsReader>().hasPermissions();
+    final smsGranted = await smsReader.hasPermissions();
     if (!mounted) return;
     setState(() {
       _name = name;
@@ -150,6 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       if (mounted) setState(() => _overlayBusy = false);
     }
   }
+
   Future<void> _scanInboxNow() async {
     setState(() => _scanning = true);
     try {
@@ -182,6 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   }
 
   Future<void> _editDailyGoal() async {
+    final driverSettings = context.read<DriverSettingsService>();
     final ctrl = TextEditingController(text: _dailyGoal.toStringAsFixed(0));
     final result = await showDialog<double>(
       context: context,
@@ -202,11 +208,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ),
     );
     if (result == null || result <= 0) return;
-    await context.read<DriverSettingsService>().setDailyGoal(result);
+    await driverSettings.setDailyGoal(result);
+    if (!mounted) return;
     setState(() => _dailyGoal = result);
   }
 
   Future<void> _editServiceInterval() async {
+    final driverSettings = context.read<DriverSettingsService>();
     final ctrl = TextEditingController(text: _serviceIntervalKm.toStringAsFixed(0));
     final result = await showDialog<double>(
       context: context,
@@ -227,7 +235,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ),
     );
     if (result == null || result <= 0) return;
-    await context.read<DriverSettingsService>().setServiceIntervalKm(result);
+    await driverSettings.setServiceIntervalKm(result);
+    if (!mounted) return;
     setState(() => _serviceIntervalKm = result);
   }
 
@@ -263,171 +272,217 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     return Scaffold(
       appBar: widget.showAppBar ? AppBar(title: Text(strings.t('settings'))) : null,
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppTheme.s4),
         children: [
-          Card(
-            child: ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.person)),
-              title: Text(_name ?? '...'),
-              subtitle: Text(_phone ?? ''),
+          // --- Profile ---
+          FadeSlideIn(
+            index: 0,
+            child: Card(
+              child: ListTile(
+                leading: const CircleAvatar(child: Icon(Icons.person)),
+                title: Text(_name ?? '...'),
+                subtitle: Text(_phone ?? ''),
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              leading: Icon(
-                _subscription?.paid == true ? Icons.verified : Icons.warning_amber,
-                color: _subscription?.paid == true ? Colors.green : Colors.orange,
-              ),
-              title: Text(_subscription?.paid == true ? 'Subscription active' : 'Subscription inactive'),
-              subtitle: Text(
-                _subscription?.expires != null
-                    ? 'Expires ${DateFormat.yMMMd().format(_subscription!.expires!)}'
-                    : 'No subscription data',
+          const SizedBox(height: AppTheme.s3),
+          // --- Subscription ---
+          FadeSlideIn(
+            index: 1,
+            child: SoftCard(
+              accent: _subscription?.paid == true ? AppTheme.primary : AppTheme.accentAmber,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: IconBadge(
+                  icon: _subscription?.paid == true ? Icons.verified : Icons.warning_amber,
+                  color: _subscription?.paid == true ? AppTheme.primary : AppTheme.accentAmber,
+                ),
+                title: Text(_subscription?.paid == true ? 'Subscription active' : 'Subscription inactive'),
+                subtitle: Text(
+                  _subscription?.expires != null
+                      ? 'Expires ${DateFormat.yMMMd().format(_subscription!.expires!)}'
+                      : 'No subscription data',
+                ),
               ),
             ),
           ),
 
-          const SizedBox(height: 20),
-          Text('Payments', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey)),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.sms_outlined),
-              title: const Text('SMS reading permission'),
-              subtitle: Text(_smsPermissionGranted ? 'Granted' : 'Required to auto-capture Telebirr payments'),
-              trailing: FilledButton(
-                onPressed: _smsPermissionBusy ? null : _requestSmsPermission,
-                child: _smsPermissionBusy
-                    ? const SizedBox(
-                        height: 16,
-                        width: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(_smsPermissionGranted ? 'Granted' : 'Grant'),
+          const SizedBox(height: AppTheme.s5),
+          // --- Payments section ---
+          FadeSlideIn(index: 2, child: SectionHeader(title: 'Payments')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 3,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.sms_outlined),
+                title: const Text('SMS reading permission'),
+                subtitle: Text(_smsPermissionGranted ? 'Granted' : 'Required to auto-capture Telebirr payments'),
+                trailing: FilledButton(
+                  onPressed: _smsPermissionBusy ? null : _requestSmsPermission,
+                  child: _smsPermissionBusy
+                      ? SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: context.isDark ? Colors.black : Colors.white,
+                          ),
+                        )
+                      : Text(_smsPermissionGranted ? 'Granted' : 'Grant'),
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.search),
-              title: Text(strings.t('scan_inbox')),
-              subtitle: const Text('Pull in any existing Telebirr messages already in your inbox'),
-              trailing: _scanning
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : FilledButton(onPressed: _scanInboxNow, child: const Text('Scan')),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: SwitchListTile(
-              secondary: const Icon(Icons.blur_circular),
-              title: const Text('Floating payment bubble'),
-              subtitle: Text(
-                !_overlayPermissionGranted
-                    ? 'Requires "Display over other apps" permission'
-                    : _overlayActive
-                        ? 'Active — shows over other apps'
-                        : 'Off',
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 4,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.search),
+                title: Text(strings.t('scan_inbox')),
+                subtitle: const Text('Pull in any existing Telebirr messages already in your inbox'),
+                trailing: _scanning
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : FilledButton(onPressed: _scanInboxNow, child: const Text('Scan')),
               ),
-              value: _overlayActive,
-              onChanged: _overlayBusy ? null : (_) => _toggleOverlay(),
+            ),
+          ),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 5,
+            child: Card(
+              child: SwitchListTile(
+                secondary: const Icon(Icons.blur_circular),
+                title: const Text('Floating payment bubble'),
+                subtitle: Text(
+                  !_overlayPermissionGranted
+                      ? 'Requires "Display over other apps" permission'
+                      : _overlayActive
+                          ? 'Active — shows over other apps'
+                          : 'Off',
+                ),
+                value: _overlayActive,
+                onChanged: _overlayBusy ? null : (_) => _toggleOverlay(),
+              ),
             ),
           ),
 
-          const SizedBox(height: 20),
-          Text('Goals & vehicle', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey)),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.flag_outlined),
-              title: Text(strings.t('daily_goal')),
-              subtitle: Text('${_dailyGoal.toStringAsFixed(0)} ETB / day'),
-              trailing: TextButton(onPressed: _editDailyGoal, child: const Text('Edit')),
+          const SizedBox(height: AppTheme.s5),
+          // --- Goals & vehicle section ---
+          FadeSlideIn(index: 6, child: SectionHeader(title: 'Goals & vehicle')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 7,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: Text(strings.t('daily_goal')),
+                subtitle: Text('${_dailyGoal.toStringAsFixed(0)} ETB / day'),
+                trailing: TextButton(onPressed: _editDailyGoal, child: const Text('Edit')),
+              ),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.build_outlined),
-              title: const Text('Service interval'),
-              subtitle: Text('Every ${_serviceIntervalKm.toStringAsFixed(0)} km'),
-              trailing: TextButton(onPressed: _editServiceInterval, child: const Text('Edit')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 8,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.build_outlined),
+                title: const Text('Service interval'),
+                subtitle: Text('Every ${_serviceIntervalKm.toStringAsFixed(0)} km'),
+                trailing: TextButton(onPressed: _editServiceInterval, child: const Text('Edit')),
+              ),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Just had your vehicle serviced?'),
-              trailing: OutlinedButton(onPressed: _markServiceDone, child: const Text('Reset reminder')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 9,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.check_circle_outline),
+                title: const Text('Just had your vehicle serviced?'),
+                trailing: OutlinedButton(onPressed: _markServiceDone, child: const Text('Reset reminder')),
+              ),
             ),
           ),
 
-          const SizedBox(height: 20),
-          Text('App', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey)),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.dark_mode_outlined),
-                      const SizedBox(width: 12),
-                      Text('Theme', style: Theme.of(context).textTheme.titleMedium),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Builder(builder: (context) {
-                    final themeController = context.watch<ThemeController>();
-                    return SegmentedButton<ThemeMode>(
-                      segments: const [
-                        ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode), label: Text('Dark')),
-                        ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode), label: Text('Light')),
-                        ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto), label: Text('Auto')),
+          const SizedBox(height: AppTheme.s5),
+          // --- App section ---
+          FadeSlideIn(index: 10, child: SectionHeader(title: 'App')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 11,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(AppTheme.s4, AppTheme.s3, AppTheme.s4, AppTheme.s4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.dark_mode_outlined),
+                        const SizedBox(width: AppTheme.s3),
+                        Text('Theme', style: Theme.of(context).textTheme.titleMedium),
                       ],
-                      selected: {themeController.mode},
-                      onSelectionChanged: (s) => themeController.setMode(s.first),
-                    );
-                  }),
-                ],
+                    ),
+                    const SizedBox(height: AppTheme.s3),
+                    Builder(builder: (innerContext) {
+                      final themeController = innerContext.watch<ThemeController>();
+                      return SegmentedButton<ThemeMode>(
+                        segments: const [
+                          ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode), label: Text('Dark')),
+                          ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode), label: Text('Light')),
+                          ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto), label: Text('Auto')),
+                        ],
+                        selected: {themeController.mode},
+                        onSelectionChanged: (s) => themeController.setMode(s.first),
+                      );
+                    }),
+                  ],
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.language),
-              title: Text(strings.t('language')),
-              trailing: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'en', label: Text('English')),
-                  ButtonSegment(value: 'am', label: Text('አማርኛ')),
-                ],
-                selected: {strings.languageCode},
-                onSelectionChanged: (s) => strings.setLanguage(s.first),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 12,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.language),
+                title: Text(strings.t('language')),
+                trailing: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'en', label: Text('English')),
+                    ButtonSegment(value: 'am', label: Text('አማርኛ')),
+                  ],
+                  selected: {strings.languageCode},
+                  onSelectionChanged: (s) => strings.setLanguage(s.first),
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.ios_share),
-              title: Text(strings.t('export_backup')),
-              subtitle: const Text('Share your rides/payments/expenses as CSV files'),
-              trailing: FilledButton(onPressed: _exportData, child: const Text('Export')),
+          const SizedBox(height: AppTheme.s2),
+          FadeSlideIn(
+            index: 13,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.ios_share),
+                title: Text(strings.t('export_backup')),
+                subtitle: const Text('Share your rides/payments/expenses as CSV files'),
+                trailing: FilledButton(onPressed: _exportData, child: const Text('Export')),
+              ),
             ),
           ),
 
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
-            label: Text(strings.t('log_out')),
+          const SizedBox(height: AppTheme.s6),
+          FadeSlideIn(
+            index: 14,
+            child: OutlinedButton.icon(
+              onPressed: _logout,
+              icon: const Icon(Icons.logout),
+              label: Text(strings.t('log_out')),
+            ),
           ),
         ],
       ),
