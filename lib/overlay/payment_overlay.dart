@@ -390,8 +390,13 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
       // regardless of where the collapsed bubble was dragged. Resize first,
       // then move -- moving a window that is about to change size just gets
       // re-anchored by the resize, so the order matters.
+      //
+      // The trailing `false` is resizeOverlay's `enableDrag` flag, and it
+      // must stay false: natively it assigns straight into
+      // WindowSetup.enableDrag, re-arming the plugin's own drag handler
+      // that overlay_service.dart deliberately disabled at showOverlay time.
       await FlutterOverlayWindow.resizeOverlay(
-          _panelDp.width.round(), _panelDp.height.round(), true);
+          _panelDp.width.round(), _panelDp.height.round(), false);
       final anchor = centeredPanelAnchorDp(_screenDp, _panelDp);
       await FlutterOverlayWindow.moveOverlay(
           OverlayPosition(anchor.dx, anchor.dy));
@@ -401,7 +406,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
       // corner -- the point of letting it be draggable is that it stays
       // put where they left it.
       await FlutterOverlayWindow.resizeOverlay(kOverlayCollapsedWindowDp.round(),
-          kOverlayCollapsedWindowDp.round(), true);
+          kOverlayCollapsedWindowDp.round(), false);
       await FlutterOverlayWindow.moveOverlay(
           OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy));
     }
