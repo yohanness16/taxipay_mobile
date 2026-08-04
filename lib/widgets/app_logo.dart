@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// Custom-drawn app mark, entirely vector (no bundled image asset).
 ///
 /// Concept: this app does exactly two things -- tracks where/when a ride
@@ -34,6 +36,11 @@ class AppLogo extends StatelessWidget {
 }
 
 class _LogoPainter extends CustomPainter {
+  /// The mark's own accent. Deliberately the brand green rather than a raw
+  /// Material swatch, so the logo's ping rings and rim light match the
+  /// primary used everywhere else on screen.
+  static const _accent = AppTheme.primary;
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
@@ -59,7 +66,7 @@ class _LogoPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = w * 0.014
-          ..color = const Color(0xFF00E676).withOpacity(f == 1.3 ? 0.28 : 0.14),
+          ..color = _accent.withValues(alpha: f == 1.3 ? 0.28 : 0.14),
       );
     }
 
@@ -67,7 +74,7 @@ class _LogoPainter extends CustomPainter {
     canvas.drawOval(
       Rect.fromCenter(center: Offset(w * 0.5, h * 0.945), width: w * 0.30, height: h * 0.035),
       Paint()
-        ..color = Colors.black.withOpacity(0.28)
+        ..color = Colors.black.withValues(alpha: 0.28)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, w * 0.02),
     );
 
@@ -87,7 +94,7 @@ class _LogoPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = w * 0.022
-        ..color = const Color(0xFF00E676).withOpacity(0.5),
+        ..color = _accent.withValues(alpha: 0.5),
     );
 
     // Glass highlight across the pin's upper-left, purely additive.
@@ -99,7 +106,7 @@ class _LogoPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Colors.white.withOpacity(0.16), Colors.white.withOpacity(0.0)],
+          colors: [Colors.white.withValues(alpha: 0.16), Colors.white.withValues(alpha: 0.0)],
         ).createShader(Rect.fromLTWH(0, 0, w, h * 0.5)),
     );
     canvas.restore();
@@ -110,7 +117,7 @@ class _LogoPainter extends CustomPainter {
       headCenter,
       coreRadius * 1.35,
       Paint()
-        ..color = const Color(0xFF00E676).withOpacity(0.5)
+        ..color = _accent.withValues(alpha: 0.5)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, w * 0.045),
     );
     canvas.drawCircle(
@@ -120,7 +127,7 @@ class _LogoPainter extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF7CFFB2), Color(0xFF00C766)],
+          colors: [Color(0xFF7CFFB2), AppTheme.primary],
         ).createShader(Rect.fromCircle(center: headCenter, radius: coreRadius)),
     );
 

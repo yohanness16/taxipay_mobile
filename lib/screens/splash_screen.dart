@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/subscription_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/modern_widgets.dart';
 import 'main_shell.dart';
 import 'onboarding_screen.dart';
 import 'registration_screen.dart';
@@ -51,6 +52,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     }
 
     final phone = await auth.phone;
+    if (!mounted) return;
     final subscriptionManager = context.read<SubscriptionManager>();
     final snapshot = await subscriptionManager.checkSubscriptionStatus(phone!);
 
@@ -67,36 +69,74 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    // The splash is a deliberate brand moment, so it stays on the dark
+    // canvas in both themes (it also matches the native launch screen, so
+    // there is no white flash on the way in). Everything else on it is
+    // driven by the design tokens.
     return Scaffold(
       backgroundColor: AppTheme.surfaceDark,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const AppLogo(size: 96, animate: true),
-            const SizedBox(height: 20),
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 700),
-              curve: Curves.easeOut,
-              builder: (context, t, child) => Opacity(opacity: t, child: child),
-              child: const Text(
-                'Telebirr Driver Assistant',
-                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: Colors.white),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0, -0.35),
+            radius: 1.1,
+            colors: [Color(0xFF17241D), AppTheme.surfaceDark, Colors.black],
+            stops: [0, 0.55, 1],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const AppLogo(size: 96, animate: true),
+              const SizedBox(height: AppTheme.s5),
+              const FadeSlideIn(
+                index: 2,
+                delayStepMs: 130,
+                child: Text(
+                  'Telebirr Driver Assistant',
+                  style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    color: Colors.white,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Payments. Rides. Effortless.',
-              style: TextStyle(fontSize: 13, color: Colors.white54),
-            ),
-            const SizedBox(height: 28),
-            const SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(strokeWidth: 2.4, color: AppTheme.primary),
-            ),
-          ],
+              const SizedBox(height: AppTheme.s2),
+              FadeSlideIn(
+                index: 3,
+                delayStepMs: 130,
+                child: Text(
+                  'Payments. Rides. Effortless.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    letterSpacing: 0.2,
+                    color: Colors.white.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppTheme.s8),
+              // A slim determinate-looking bar reads calmer than a spinner
+              // for a fixed ~1s wait, and echoes the brand green.
+              FadeSlideIn(
+                index: 4,
+                delayStepMs: 130,
+                child: SizedBox(
+                  width: 96,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppTheme.s1),
+                    child: LinearProgressIndicator(
+                      minHeight: 3,
+                      backgroundColor: Colors.white.withValues(alpha: 0.10),
+                      valueColor: const AlwaysStoppedAnimation(AppTheme.primary),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

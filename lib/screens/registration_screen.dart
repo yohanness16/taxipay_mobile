@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/app_logo.dart';
+import '../widgets/modern_widgets.dart';
 import 'main_shell.dart';
 import 'onboarding_screen.dart';
 
@@ -64,66 +67,120 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(Icons.local_taxi, size: 56, color: Color(0xFF00A651)),
-                  const SizedBox(height: 12),
-                  Text(
-                    _isLogin ? 'Welcome back' : 'Create your driver account',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 24),
-                  TextFormField(
-                    controller: _phoneCtrl,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(labelText: 'Phone number', hintText: '+251911234567'),
-                    validator: (v) => (v == null || !RegExp(r'^\+251[97]\d{8}$').hasMatch(v))
-                        ? 'Enter a valid Ethiopian number, e.g. +251911234567'
-                        : null,
-                  ),
-                  if (!_isLogin) ...[
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _nameCtrl,
-                      decoration: const InputDecoration(labelText: 'Full name'),
-                      validator: (v) => (v == null || v.trim().length < 2) ? 'Enter your name' : null,
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.s6, vertical: AppTheme.s8),
+            child: ConstrainedBox(
+              // Keeps the form a comfortable reading width on tablets and
+              // large phones instead of stretching edge to edge.
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Same mark the splash just showed, so the hand-off from
+                    // launch into sign-up feels continuous.
+                    const FadeSlideIn(child: Center(child: AppLogo(size: 76))),
+                    const SizedBox(height: AppTheme.s5),
+                    FadeSlideIn(
+                      index: 1,
+                      child: Text(
+                        _isLogin ? 'Welcome back' : 'Create your driver account',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _vehicleCtrl,
-                      decoration: const InputDecoration(labelText: 'Vehicle number (optional)'),
+                    const SizedBox(height: AppTheme.s6),
+                    FadeSlideIn(
+                      index: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: _phoneCtrl,
+                            keyboardType: TextInputType.phone,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Phone number',
+                              hintText: '+251911234567',
+                              prefixIcon: Icon(Icons.phone_iphone_rounded),
+                            ),
+                            validator: (v) => (v == null || !RegExp(r'^\+251[97]\d{8}$').hasMatch(v))
+                                ? 'Enter a valid Ethiopian number, e.g. +251911234567'
+                                : null,
+                          ),
+                          if (!_isLogin) ...[
+                            const SizedBox(height: AppTheme.s3),
+                            TextFormField(
+                              controller: _nameCtrl,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'Full name',
+                                prefixIcon: Icon(Icons.person_outline_rounded),
+                              ),
+                              validator: (v) => (v == null || v.trim().length < 2) ? 'Enter your name' : null,
+                            ),
+                            const SizedBox(height: AppTheme.s3),
+                            TextFormField(
+                              controller: _vehicleCtrl,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'Vehicle number (optional)',
+                                prefixIcon: Icon(Icons.directions_car_outlined),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: AppTheme.s3),
+                          TextFormField(
+                            controller: _passwordCtrl,
+                            obscureText: true,
+                            textInputAction: TextInputAction.done,
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: Icon(Icons.lock_outline_rounded),
+                            ),
+                            validator: (v) => (v == null || v.length < 6) ? 'At least 6 characters' : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: AppTheme.s4),
+                      CalloutBanner(
+                        icon: Icons.error_outline_rounded,
+                        message: _error!,
+                        accent: AppTheme.danger,
+                      ),
+                    ],
+                    const SizedBox(height: AppTheme.s5),
+                    FadeSlideIn(
+                      index: 3,
+                      child: FilledButton(
+                        onPressed: _loading ? null : _submit,
+                        child: _loading
+                            ? SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  // Match the filled button's own foreground so the
+                                  // spinner does not vanish into the green fill.
+                                  color: context.isDark ? Colors.black : Colors.white,
+                                ),
+                              )
+                            : Text(_isLogin ? 'Log in' : 'Register (7-day free trial)'),
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.s1),
+                    FadeSlideIn(
+                      index: 4,
+                      child: TextButton(
+                        onPressed: _loading ? null : () => setState(() => _isLogin = !_isLogin),
+                        child: Text(_isLogin ? "Don't have an account? Register" : 'Already registered? Log in'),
+                      ),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _passwordCtrl,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password'),
-                    validator: (v) => (v == null || v.length < 6) ? 'At least 6 characters' : null,
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_error!, style: const TextStyle(color: Colors.red)),
-                  ],
-                  const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: _loading ? null : _submit,
-                    child: _loading
-                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : Text(_isLogin ? 'Log in' : 'Register (7-day free trial)'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: _loading ? null : () => setState(() => _isLogin = !_isLogin),
-                    child: Text(_isLogin ? "Don't have an account? Register" : 'Already registered? Log in'),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

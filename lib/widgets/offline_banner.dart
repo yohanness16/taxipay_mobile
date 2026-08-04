@@ -1,6 +1,8 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// Thin banner shown at the top of a screen whenever the device has no
 /// network connection. The rest of the app (rides, payments, expenses,
 /// cached subscription status) all keep working underneath it — this is
@@ -37,16 +39,20 @@ class _OfflineBannerState extends State<OfflineBanner> {
     if (!_offline) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      color: Colors.orange.shade100,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: context.tintedSurface(AppTheme.accentAmber),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.s4, vertical: AppTheme.s2),
       child: Row(
         children: [
-          Icon(Icons.cloud_off, size: 16, color: Colors.orange.shade800),
-          const SizedBox(width: 8),
+          const Icon(Icons.cloud_off, size: 16, color: AppTheme.accentAmber),
+          const SizedBox(width: AppTheme.s2),
           Expanded(
             child: Text(
               widget.message,
-              style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
+              style: TextStyle(
+                color: context.isDark ? Colors.white.withValues(alpha: 0.9) : Colors.black87,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
