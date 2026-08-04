@@ -134,25 +134,27 @@ const double _bubbleSize = 60;
 const double kOverlayCollapsedContentSize = _bubbleSize + 26; // 86 dp
 
 // Peak scale the one-shot "ping" ring animation transform-scales up to
-// (see _ringScale in _PaymentOverlayAppState). Shared here so the window
-// sizing math can never silently drift out of sync with the animation that
-// actually needs the room.
-const double _ringMaxScale = 2.4;
+// (see _ringScale in _PaymentOverlayAppState).
+//
+// This is capped so the ring at full scale still fits inside
+// kOverlayCollapsedContentSize (60 * 1.42 = 85.2 <= 86). That constraint
+// is deliberate and worth keeping: anything the ring paints outside the
+// window gets clipped, and enlarging the window to fit a bigger ring is
+// not free, because an overlay window swallows every touch inside its
+// bounds. At the previous 2.4x the window had to be ~156dp square -- a
+// third of a phone's width of invisible, tap-eating surface parked on top
+// of whatever app the driver was actually using, all to accommodate a
+// decorative pulse. Keeping the ring inside the content box keeps the
+// window tight to the thing you can actually see and press.
+const double _ringMaxScale = 1.42;
 
-// How far (dp, per side) the ping ring paints beyond the content box at its
-// peak scale. The ring is _bubbleSize wide, so at _ringMaxScale it is
-// `_bubbleSize * _ringMaxScale` wide -- centered, so it overshoots the
-// content box by half the difference on each side.
-const double kOverlayCollapsedRingOvershoot =
-    (_bubbleSize * _ringMaxScale - kOverlayCollapsedContentSize) / 2; // ~35 dp
-
-/// Total size (dp) the collapsed overlay window needs so the bubble, its
-/// unread badge, the dismiss affordance and the ping ring at peak scale all
-/// fit inside the window's real bounds. Anything drawn outside those bounds
-/// is not just clipped -- Android never delivers touches there either, which
-/// is what made parts of the bubble silently stop responding.
-const double kOverlayCollapsedWindowDp =
-    kOverlayCollapsedContentSize + kOverlayCollapsedRingOvershoot * 2; // ~156
+/// Total size (dp) of the collapsed overlay window. Everything the bubble
+/// draws -- the circle, its badge, the dismiss affordance and the ping ring
+/// at peak scale -- fits inside this, which matters twice over: content
+/// painted outside the window's bounds is clipped, *and* Android never
+/// delivers touches outside those bounds, so anything overflowing silently
+/// stops being tappable.
+const double kOverlayCollapsedWindowDp = kOverlayCollapsedContentSize; // 86
 
 /// The default "home" position (dp, from the top-left of the screen) for the
 /// collapsed bubble: bottom-right corner, held clear of the nav bar. The
@@ -652,14 +654,14 @@ class _Bubble extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: Colors.white,
                     border: Border.all(
-                        color: Colors.white.withOpacity(0.5), width: 2),
+                        color: Colors.white.withValues(alpha: 0.5), width: 2),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.35),
+                          color: Colors.black.withValues(alpha: 0.35),
                           blurRadius: 10,
                           offset: const Offset(0, 4)),
                       BoxShadow(
-                        color: _brandGreen.withOpacity(0.35 + glowValue * 0.5),
+                        color: _brandGreen.withValues(alpha: 0.35 + glowValue * 0.5),
                         blurRadius: 14 + glowValue * 16,
                         spreadRadius: 1 + glowValue * 4,
                       ),
@@ -727,10 +729,10 @@ class _Bubble extends StatelessWidget {
                 width: 18,
                 height: 18,
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.55),
+                  color: Colors.black.withValues(alpha: 0.55),
                   shape: BoxShape.circle,
                   border: Border.all(
-                      color: Colors.white.withOpacity(0.7), width: 1),
+                      color: Colors.white.withValues(alpha: 0.7), width: 1),
                 ),
                 child: const Icon(Icons.close, size: 12, color: Colors.white),
               ),
@@ -797,12 +799,12 @@ class _GlassCard extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              const Color(0xFF163324).withOpacity(0.94),
-              const Color(0xFF0B1810).withOpacity(0.97),
+              const Color(0xFF163324).withValues(alpha: 0.94),
+              const Color(0xFF0B1810).withValues(alpha: 0.97),
             ],
           ),
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: Colors.white.withOpacity(0.14)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
           boxShadow: const [
             BoxShadow(
                 color: Colors.black45, blurRadius: 24, offset: Offset(0, 8))
@@ -887,7 +889,7 @@ class _Header extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: _brandGreen.withOpacity(0.2),
+                color: _brandGreen.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.payments_rounded,
@@ -926,7 +928,7 @@ class _Header extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.12),
+                    color: Colors.white.withValues(alpha: 0.12),
                     shape: BoxShape.circle),
                 child: const Icon(Icons.close, size: 16, color: Colors.white),
               ),
@@ -979,7 +981,7 @@ class _RideControlState extends State<_RideControl> {
                   boxShadow: [
                     BoxShadow(
                         color: (active ? Colors.red : _brandGreen)
-                            .withOpacity(0.35),
+                            .withValues(alpha: 0.35),
                         blurRadius: 10,
                         offset: const Offset(0, 3)),
                   ],
@@ -1092,7 +1094,7 @@ class _PaymentRow extends StatelessWidget {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-                color: _brandGreen.withOpacity(0.18), shape: BoxShape.circle),
+                color: _brandGreen.withValues(alpha: 0.18), shape: BoxShape.circle),
             child: const Icon(Icons.arrow_downward_rounded,
                 color: _brandGreen, size: 18),
           ),
