@@ -53,6 +53,23 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen> {
     });
   }
 
+  /// Flattens the payments into a render list where a day header is emitted
+  /// whenever the calendar day changes. Purely presentational -- the order
+  /// the manager returned is preserved exactly.
+  List<Object> _sectioned() {
+    final items = <Object>[];
+    DateTime? currentDay;
+    for (final p in _payments) {
+      final day = DateTime(p.receivedAt.year, p.receivedAt.month, p.receivedAt.day);
+      if (currentDay == null || day != currentDay) {
+        currentDay = day;
+        items.add(day);
+      }
+      items.add(p);
+    }
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = _payments.fold<double>(0.0, (sum, p) => sum + p.amount);
@@ -65,8 +82,18 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppTheme.s4, AppTheme.s3, AppTheme.s4, 0),
             child: SegmentedButton<_Filter>(
+              style: SegmentedButton.styleFrom(
+                backgroundColor: context.isDark ? AppTheme.surfaceCard : Colors.white,
+                selectedBackgroundColor: context.tintedSurface(AppTheme.primaryDark),
+                selectedForegroundColor: context.isDark ? AppTheme.primary : AppTheme.primaryDark,
+                foregroundColor: context.subtleText,
+                side: BorderSide(color: context.hairline),
+                textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.rSm)),
+              ),
+              showSelectedIcon: false,
               segments: const [
                 ButtonSegment(value: _Filter.all, label: Text('All')),
                 ButtonSegment(value: _Filter.week, label: Text('This week')),
@@ -80,37 +107,18 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppTheme.s4),
             child: FadeSlideIn(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [AppTheme.primaryDark, AppTheme.primary]),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Total', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                          Text('${total.toStringAsFixed(0)} ETB',
-                              style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                    _MiniTotal(icon: Icons.phone_android, label: 'Telebirr', value: telebirrTotal),
-                    const SizedBox(width: 16),
-                    _MiniTotal(icon: Icons.payments_rounded, label: 'Cash', value: cashTotal),
-                  ],
-                ),
+              child: _TotalsHeader(
+                total: total,
+                telebirrTotal: telebirrTotal,
+                cashTotal: cashTotal,
               ),
             ),
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const _PaymentListSkeleton()
                 : _payments.isEmpty
                     ? const EmptyState(
                         icon: Icons.payments_outlined,
@@ -119,47 +127,186 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen> {
                       )
                     : RefreshIndicator(
                         onRefresh: _load,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          itemCount: _payments.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (context, i) {
-                            final p = _payments[i];
-                            final isCash = p.method == PaymentMethod.cash;
-                            return FadeSlideIn(
-                              index: i,
-                              delayStepMs: 20,
-                              child: Card(
-                                child: ListTile(
-                                  leading: IconBadge(
-                                    icon: isCash ? Icons.payments_rounded : Icons.arrow_downward,
-                                    color: isCash ? Colors.teal : AppTheme.primaryDark,
+                        child: Builder(
+                          builder: (context) {
+                            final items = _sectioned();
+                            return ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(AppTheme.s4, 0, AppTheme.s4, AppTheme.s6),
+                              itemCount: items.length,
+                              itemBuilder: (context, i) {
+                                final item = items[i];
+                                if (item is DateTime) {
+                                  return FadeSlideIn(
+                                    index: i,
+                                    delayStepMs: 20,
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                        top: i == 0 ? 0 : AppTheme.s4,
+                                        bottom: AppTheme.s1,
+                                      ),
+                                      child: SectionHeader(title: DateFormat.yMMMEd().format(item)),
+                                    ),
+                                  );
+                                }
+                                final p = item as Payment;
+                                return FadeSlideIn(
+                                  index: i,
+                                  delayStepMs: 20,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: AppTheme.s2),
+                                    child: _PaymentRow(
+                                      payment: p,
+                                      onCall: () => _callPayer(p.payerPhone),
+                                    ),
                                   ),
-                                  title: Text(
-                                    isCash
-                                        ? '${p.amount.toStringAsFixed(0)} ETB — cash${p.payerName != null ? ' (${p.payerName})' : ''}'
-                                        : '${p.amount.toStringAsFixed(0)} ETB from ${p.payerPhone}',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
-                                  ),
-                                  subtitle: Text(DateFormat.yMMMd().add_jm().format(p.receivedAt)),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (!isCash && p.payerPhone != 'Unknown')
-                                        IconButton(
-                                          icon: const Icon(Icons.call, size: 20, color: AppTheme.primaryDark),
-                                          onPressed: () => _callPayer(p.payerPhone),
-                                        ),
-                                      if (p.synced) const Icon(Icons.cloud_done, size: 18, color: Colors.grey),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                                );
+                              },
                             );
                           },
                         ),
                       ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hero earnings card. Keeps the brand gradient but pulls its radius,
+/// spacing and glow from the design tokens so it sits in the same family as
+/// the cards below it.
+class _TotalsHeader extends StatelessWidget {
+  const _TotalsHeader({required this.total, required this.telebirrTotal, required this.cashTotal});
+
+  final double total;
+  final double telebirrTotal;
+  final double cashTotal;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.s5, vertical: AppTheme.s4),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppTheme.primaryDark, AppTheme.primary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(AppTheme.rLg),
+        boxShadow: AppTheme.shadow(
+          tint: AppTheme.primaryDark,
+          opacity: context.isDark ? 0.22 : 0.28,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Total',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.s1),
+                CountUpText(
+                  value: total,
+                  suffix: ' ETB',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppTheme.s3),
+          _MiniTotal(icon: Icons.phone_android, label: 'Telebirr', value: telebirrTotal),
+          Container(
+            width: 1,
+            height: 30,
+            margin: const EdgeInsets.symmetric(horizontal: AppTheme.s3),
+            color: Colors.white.withValues(alpha: 0.22),
+          ),
+          _MiniTotal(icon: Icons.payments_rounded, label: 'Cash', value: cashTotal),
+        ],
+      ),
+    );
+  }
+}
+
+/// One payment in the history list.
+class _PaymentRow extends StatelessWidget {
+  const _PaymentRow({required this.payment, required this.onCall});
+
+  final Payment payment;
+  final VoidCallback onCall;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = payment;
+    final isCash = p.method == PaymentMethod.cash;
+    final brand = context.isDark ? AppTheme.primary : AppTheme.primaryDark;
+    final accent = isCash ? AppTheme.teal : brand;
+    final canCall = !isCash && p.payerPhone != 'Unknown';
+
+    return SoftCard(
+      padding: const EdgeInsets.fromLTRB(AppTheme.s3, AppTheme.s3, AppTheme.s2, AppTheme.s3),
+      child: Row(
+        children: [
+          IconBadge(
+            icon: isCash ? Icons.payments_rounded : Icons.arrow_downward,
+            color: accent,
+            size: 42,
+          ),
+          const SizedBox(width: AppTheme.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isCash
+                      ? '${p.amount.toStringAsFixed(0)} ETB — cash${p.payerName != null ? ' (${p.payerName})' : ''}'
+                      : '${p.amount.toStringAsFixed(0)} ETB from ${p.payerPhone}',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, letterSpacing: -0.2),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Text(
+                      DateFormat.jm().format(p.receivedAt),
+                      style: TextStyle(color: context.subtleText, fontSize: 12.5),
+                    ),
+                    if (p.synced) ...[
+                      const SizedBox(width: AppTheme.s2),
+                      Icon(Icons.cloud_done_rounded, size: 13, color: context.faintText),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (canCall)
+            IconButton(
+              icon: Icon(Icons.call_rounded, size: 19, color: brand),
+              style: IconButton.styleFrom(
+                backgroundColor: context.tintedSurface(brand),
+                minimumSize: const Size(36, 36),
+                padding: EdgeInsets.zero,
+              ),
+              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+              onPressed: onCall,
+            )
+          else
+            const SizedBox(width: AppTheme.s2),
         ],
       ),
     );
@@ -180,12 +327,55 @@ class _MiniTotal extends StatelessWidget {
         Row(
           children: [
             Icon(icon, color: Colors.white70, size: 13),
-            const SizedBox(width: 4),
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            const SizedBox(width: AppTheme.s1),
+            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600)),
           ],
         ),
-        Text('${value.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text(
+          value.toStringAsFixed(0),
+          style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+        ),
       ],
+    );
+  }
+}
+
+/// Placeholder rows while payments load, so the list keeps its shape rather
+/// than collapsing to a lone centred spinner.
+class _PaymentListSkeleton extends StatelessWidget {
+  const _PaymentListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(AppTheme.s4, 0, AppTheme.s4, AppTheme.s6),
+      itemCount: 6,
+      physics: const NeverScrollableScrollPhysics(),
+      separatorBuilder: (_, __) => const SizedBox(height: AppTheme.s2),
+      itemBuilder: (context, i) => FadeSlideIn(
+        index: i,
+        delayStepMs: 20,
+        child: SoftCard(
+          padding: const EdgeInsets.all(AppTheme.s3),
+          child: Row(
+            children: const [
+              SkeletonBox(height: 42, width: 42, radius: 21),
+              SizedBox(width: AppTheme.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SkeletonBox(height: 12, width: 170, radius: AppTheme.s1),
+                    SizedBox(height: AppTheme.s2),
+                    SkeletonBox(height: 10, width: 80, radius: AppTheme.s1),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

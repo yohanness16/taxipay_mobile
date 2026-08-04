@@ -44,40 +44,54 @@ class _RideListScreenState extends State<RideListScreen> {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rXl)),
+      ),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(
-          left: 20, right: 20, top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          left: AppTheme.s5,
+          right: AppTheme.s5,
+          top: AppTheme.s3,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + AppTheme.s5,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Center(
-              child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+              child: Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: ctx.faintText.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(AppTheme.s1),
+                ),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppTheme.s5),
             Row(
               children: [
-                const IconBadge(icon: Icons.add_road_rounded, color: Colors.blue),
-                const SizedBox(width: 12),
+                const IconBadge(icon: Icons.add_road_rounded, color: AppTheme.info),
+                const SizedBox(width: AppTheme.s3),
                 Text('New ride', style: Theme.of(ctx).textTheme.titleLarge),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.s5),
             TextField(
               controller: distanceCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Estimated distance (km)', prefixIcon: Icon(Icons.route)),
+              decoration: const InputDecoration(
+                labelText: 'Estimated distance (km)',
+                prefixIcon: Icon(Icons.route),
+              ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppTheme.s3),
             TextField(
               controller: notesCtrl,
               decoration: const InputDecoration(labelText: 'Notes (optional)', prefixIcon: Icon(Icons.notes)),
               maxLines: 2,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.s5),
             Row(
               children: [
                 Expanded(
@@ -86,7 +100,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     child: const Text('Cancel'),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppTheme.s3),
                 Expanded(
                   child: FilledButton(
                     onPressed: () => Navigator.pop(ctx, true),
@@ -101,8 +115,11 @@ class _RideListScreenState extends State<RideListScreen> {
     );
 
     if (saved != true) return;
+    if (!mounted) return;
 
     final phone = await context.read<AuthService>().phone;
+    if (!mounted) return;
+
     final ride = Ride(
       driverPhone: phone ?? '',
       startTime: DateTime.now(),
@@ -113,6 +130,23 @@ class _RideListScreenState extends State<RideListScreen> {
     await _load();
   }
 
+  /// Flattens the rides into a render list where a day header is emitted
+  /// whenever the calendar day changes. Purely presentational -- the order
+  /// the manager returned is preserved exactly.
+  List<Object> _sectioned() {
+    final items = <Object>[];
+    DateTime? currentDay;
+    for (final r in _rides) {
+      final day = DateTime(r.startTime.year, r.startTime.month, r.startTime.day);
+      if (currentDay == null || day != currentDay) {
+        currentDay = day;
+        items.add(day);
+      }
+      items.add(r);
+    }
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -120,11 +154,12 @@ class _RideListScreenState extends State<RideListScreen> {
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'ride_fab',
         onPressed: _createRide,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.rMd)),
         icon: const Icon(Icons.add),
         label: const Text('New ride'),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const _RideListSkeleton()
           : _rides.isEmpty
               ? const EmptyState(
                   icon: Icons.local_taxi_outlined,
@@ -133,43 +168,101 @@ class _RideListScreenState extends State<RideListScreen> {
                 )
               : RefreshIndicator(
                   onRefresh: _load,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _rides.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final ride = _rides[i];
-                      final active = ride.endTime == null;
-                      return FadeSlideIn(
-                        index: i,
-                        child: Card(
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                            leading: IconBadge(
-                              icon: Icons.local_taxi_rounded,
-                              color: active ? AppTheme.primaryDark : Colors.blueGrey,
+                  child: Builder(
+                    builder: (context) {
+                      final items = _sectioned();
+                      return ListView.builder(
+                        padding:
+                            const EdgeInsets.fromLTRB(AppTheme.s4, AppTheme.s2, AppTheme.s4, AppTheme.s8 * 3),
+                        itemCount: items.length,
+                        itemBuilder: (context, i) {
+                          final item = items[i];
+                          if (item is DateTime) {
+                            return FadeSlideIn(
+                              index: i,
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  top: i == 0 ? 0 : AppTheme.s4,
+                                  bottom: AppTheme.s1,
+                                ),
+                                child: SectionHeader(title: DateFormat.yMMMEd().format(item)),
+                              ),
+                            );
+                          }
+                          final ride = item as Ride;
+                          return FadeSlideIn(
+                            index: i,
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: AppTheme.s2),
+                              child: _RideRow(
+                                ride: ride,
+                                active: ride.endTime == null,
+                                onEnd: () async {
+                                  await context.read<RideManager>().endRide(ride.id!);
+                                  await _load();
+                                },
+                              ),
                             ),
-                            title: Text(
-                              DateFormat.yMMMd().add_jm().format(ride.startTime),
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              ride.notes ?? (ride.distanceKm > 0 ? '${ride.distanceKm.toStringAsFixed(1)} km' : 'No notes'),
-                            ),
-                            trailing: active
-                                ? _LiveBadge(
-                                    onEnd: () async {
-                                      await context.read<RideManager>().endRide(ride.id!);
-                                      await _load();
-                                    },
-                                  )
-                                : const Icon(Icons.check_circle, color: AppTheme.primaryDark),
-                          ),
-                        ),
+                          );
+                        },
                       );
                     },
                   ),
                 ),
+    );
+  }
+}
+
+/// One ride in the history list. The in-progress ride gets a tinted card so
+/// it separates itself from the settled rows without needing a label.
+class _RideRow extends StatelessWidget {
+  const _RideRow({required this.ride, required this.active, required this.onEnd});
+
+  final Ride ride;
+  final bool active;
+  final Future<void> Function() onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final brand = context.isDark ? AppTheme.primary : AppTheme.primaryDark;
+
+    return SoftCard(
+      accent: active ? brand : null,
+      padding: const EdgeInsets.fromLTRB(AppTheme.s3, AppTheme.s3, AppTheme.s3, AppTheme.s3),
+      child: Row(
+        children: [
+          IconBadge(
+            icon: Icons.local_taxi_rounded,
+            color: active ? brand : context.subtleText,
+            size: 42,
+          ),
+          const SizedBox(width: AppTheme.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  DateFormat.yMMMd().add_jm().format(ride.startTime),
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, letterSpacing: -0.2),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  ride.notes ?? (ride.distanceKm > 0 ? '${ride.distanceKm.toStringAsFixed(1)} km' : 'No notes'),
+                  style: TextStyle(color: context.subtleText, fontSize: 12.5, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppTheme.s2),
+          if (active)
+            _LiveBadge(onEnd: onEnd)
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: AppTheme.s1),
+              child: Icon(Icons.check_circle_rounded, color: brand.withValues(alpha: 0.85), size: 22),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -199,13 +292,71 @@ class _LiveBadgeState extends State<_LiveBadge> with SingleTickerProviderStateMi
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        FadeTransition(
-          opacity: Tween(begin: 0.3, end: 1.0).animate(_controller),
-          child: const Icon(Icons.circle, color: Colors.redAccent, size: 10),
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: context.tintedSurface(AppTheme.danger),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: FadeTransition(
+            opacity: Tween(begin: 0.3, end: 1.0).animate(_controller),
+            child: const Icon(Icons.circle, color: AppTheme.danger, size: 9),
+          ),
         ),
-        const SizedBox(width: 6),
-        TextButton(onPressed: widget.onEnd, child: const Text('End ride')),
+        const SizedBox(width: AppTheme.s1),
+        TextButton(
+          onPressed: widget.onEnd,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.s2, vertical: AppTheme.s1),
+            minimumSize: const Size(0, 34),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.rSm)),
+          ),
+          child: const Text('End ride'),
+        ),
       ],
+    );
+  }
+}
+
+/// Placeholder rows shown while history loads -- keeps the list's rhythm on
+/// screen instead of collapsing to a lone centred spinner.
+class _RideListSkeleton extends StatelessWidget {
+  const _RideListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(AppTheme.s4, AppTheme.s4, AppTheme.s4, AppTheme.s8 * 3),
+      itemCount: 6,
+      physics: const NeverScrollableScrollPhysics(),
+      separatorBuilder: (_, __) => const SizedBox(height: AppTheme.s2),
+      itemBuilder: (context, i) => FadeSlideIn(
+        index: i,
+        child: SoftCard(
+          padding: const EdgeInsets.all(AppTheme.s3),
+          child: Row(
+            children: [
+              const SkeletonBox(height: 42, width: 42, radius: 21),
+              const SizedBox(width: AppTheme.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    SkeletonBox(height: 12, width: 150, radius: AppTheme.s1),
+                    SizedBox(height: AppTheme.s2),
+                    SkeletonBox(height: 10, width: 90, radius: AppTheme.s1),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppTheme.s2),
+              const SkeletonBox(height: 22, width: 22, radius: 11),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
