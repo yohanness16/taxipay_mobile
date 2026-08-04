@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 
@@ -255,6 +256,11 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   final _rideManager = RideManager();
   final _dbHelper = DatabaseHelper.instance;
 
+  // Held so it can be cancelled in dispose(). Without this the handler
+  // outlives the State it closes over: a payment arriving after teardown
+  // calls setState on a disposed State and throws.
+  StreamSubscription<dynamic>? _overlaySub;
+
   @override
   void initState() {
     super.initState();
@@ -288,7 +294,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
     _loadActiveRide();
 
-    FlutterOverlayWindow.overlayListener.listen((event) {
+    _overlaySub = FlutterOverlayWindow.overlayListener.listen((event) {
       final update = OverlayPaymentUpdate.tryParse(event);
       if (update == null || !mounted) return;
 
@@ -325,6 +331,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
   @override
   void dispose() {
+    _overlaySub?.cancel();
     _glowController.dispose();
     _popController.dispose();
     _popPlayer.dispose();
