@@ -63,24 +63,22 @@ class OverlayService {
   /// plugin's own native `enableDrag` has the buffer-compounding bug
   /// documented below).
   ///
-  /// The window is sized from the device's real pixel ratio (see
-  /// [overlayPhysicalPx]) rather than a fixed guess -- a fixed size that's
-  /// too small for a given device's density leaves part of the bubble
-  /// (the counter badge, the dismiss button, the ping ring) drawn outside
-  /// the native window's touchable bounds, which is what made the overlay
-  /// look "off-screen" and unresponsive on some phones.
+  /// Note the unit split, which the plugin does not make obvious: this
+  /// call's width/height are **physical pixels** (the native side hands
+  /// them straight to WindowManager.LayoutParams), whereas the
+  /// resize/move calls the overlay makes later are in **dp**. See the
+  /// UNITS block at the top of payment_overlay.dart.
   Future<void> start() async {
     if (await isActive()) return;
     await requestNotificationPermission();
     final view = PlatformDispatcher.instance.views.first;
     final dpr = view.devicePixelRatio;
     final screenPx = view.physicalSize;
-    final cap = (screenPx.shortestSide).round();
-    final size = overlayPhysicalPx(kOverlayCollapsedContentSize, dpr,
-        logicalOvershoot: kOverlayCollapsedRingOvershoot, maxPx: cap);
+    final cap = screenPx.shortestSide.round();
+    final sizePx = overlayPhysicalPx(kOverlayCollapsedWindowDp, dpr, maxPx: cap);
     await FlutterOverlayWindow.showOverlay(
-      height: size,
-      width: size,
+      height: sizePx,
+      width: sizePx,
       alignment: OverlayAlignment.bottomRight,
       visibility: NotificationVisibility.visibilityPublic,
       overlayTitle: 'Telebirr Driver Assistant',

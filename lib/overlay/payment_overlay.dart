@@ -93,113 +93,111 @@ class OverlayPaymentUpdate {
   }
 }
 
+// ---------------------------------------------------------------------------
+// UNITS -- read this before touching any geometry below.
+//
+// `flutter_overlay_window` is NOT self-consistent about the units its
+// three sizing/positioning APIs take, and getting this wrong is what broke
+// the overlay:
+//
+//   * showOverlay(width:, height:)  -> RAW PHYSICAL PIXELS. The native side
+//     assigns them straight into WindowManager.LayoutParams, which is a
+//     pixel API. No conversion happens.
+//   * resizeOverlay(width, height)  -> LOGICAL DP. The native side runs
+//     dpToPx() on both values before storing them.
+//   * moveOverlay(OverlayPosition) -> LOGICAL DP. Same -- native runs
+//     dpToPx() on x and y.
+//
+// (See OverlayService.java: `params.width = dpToPx(width)` in
+// resizeOverlay/moveOverlay, versus `new WindowManager.LayoutParams(
+// WindowSetup.width, ...)` used verbatim for showOverlay.)
+//
+// This file used to pass physical pixels to all three. For resize/move
+// that means the value gets multiplied by the display density a *second*
+// time: on a 2.8x-density phone a 240px window asks to become 672px, and
+// the expanded panel asks WindowManager for a buffer several times larger
+// than the whole display -- which is what crashed the native compositor,
+// and what flung the bubble off-screen on the first drag.
+//
+// Rule from here on: every geometry value in this file is in **dp**, and
+// the only place physical pixels appear is [overlayPhysicalPx], used
+// solely to feed showOverlay.
+// ---------------------------------------------------------------------------
+
 // Collapsed bubble is sized like a normal home-screen app icon.
 const double _bubbleSize = 60;
 
-// The actual on-screen footprint of the collapsed bubble, including the
-// badge/ping-ring/dismiss-affordance that render outside the core circle
-// (see _Bubble's SizedBox below) -- this, not _bubbleSize, is what the
-// native window needs to fit.
-const double kOverlayCollapsedContentSize = _bubbleSize + 26; // 86
+// The on-screen footprint of the collapsed bubble's core content, including
+// the badge and dismiss affordance that render outside the circle itself
+// (see _Bubble's SizedBox below).
+const double kOverlayCollapsedContentSize = _bubbleSize + 26; // 86 dp
 
 // Peak scale the one-shot "ping" ring animation transform-scales up to
 // (see _ringScale in _PaymentOverlayAppState). Shared here so the window
-// sizing math (kOverlayCollapsedRingOvershoot below) can never silently
-// drift out of sync with the animation that actually needs the room.
+// sizing math can never silently drift out of sync with the animation that
+// actually needs the room.
 const double _ringMaxScale = 2.4;
 
-// How far (in logical px, per side) the ping ring paints beyond
-// kOverlayCollapsedContentSize at its peak scale. The ring itself is
-// _bubbleSize wide, so at _ringMaxScale it's `_bubbleSize * _ringMaxScale`
-// wide -- centered, so it overshoots the content box by half the
-// difference on each side.
+// How far (dp, per side) the ping ring paints beyond the content box at its
+// peak scale. The ring is _bubbleSize wide, so at _ringMaxScale it is
+// `_bubbleSize * _ringMaxScale` wide -- centered, so it overshoots the
+// content box by half the difference on each side.
 const double kOverlayCollapsedRingOvershoot =
-    (_bubbleSize * _ringMaxScale - kOverlayCollapsedContentSize) / 2; // ~35
+    (_bubbleSize * _ringMaxScale - kOverlayCollapsedContentSize) / 2; // ~35 dp
 
-/// The default "home" position for the collapsed bubble: bottom-right
-/// corner with a margin, in physical pixels (clear of the nav bar). Both
-/// the main-app side (sets this as the overlay's initial `startPosition`)
-/// and the overlay isolate itself (which owns dragging from here on, and
-/// deliberately never reads position back from the plugin -- see the
-/// dragging note in _PaymentOverlayAppState) compute this the same way
-/// from the same screen size, so they always agree without needing to
-/// pass the value between isolates.
-Offset defaultBubbleAnchorPx(
-    Size screenPhysicalPx, int collapsedSizePx, double devicePixelRatio,
-    {double marginDp = 20}) {
-  final marginPx = marginDp * devicePixelRatio;
-  final x = screenPhysicalPx.width - collapsedSizePx - marginPx;
-  final y = screenPhysicalPx.height -
-      collapsedSizePx -
-      marginPx * 4; // clear of the nav bar
-  return Offset(x < 0 ? 0 : x, y < 0 ? 0 : y);
-}
+/// Total size (dp) the collapsed overlay window needs so the bubble, its
+/// unread badge, the dismiss affordance and the ping ring at peak scale all
+/// fit inside the window's real bounds. Anything drawn outside those bounds
+/// is not just clipped -- Android never delivers touches there either, which
+/// is what made parts of the bubble silently stop responding.
+const double kOverlayCollapsedWindowDp =
+    kOverlayCollapsedContentSize + kOverlayCollapsedRingOvershoot * 2; // ~156
 
-/// Where the expanded detail panel always opens, regardless of wherever
-/// the collapsed bubble was last dragged to -- bottom-right with a margin,
-/// same idea as the bubble's anchor but sized for the panel. Requested
-/// explicitly: the panel should be easy to find and read every time, not
-/// pop up wherever a tiny dragged bubble happens to be (which could be
-/// anywhere, including hard-to-reach corners).
-Offset panelAnchorPx(Size screenPhysicalPx, int panelWidthPx, int panelHeightPx,
-    double devicePixelRatio,
+/// The default "home" position (dp, from the top-left of the screen) for the
+/// collapsed bubble: bottom-right corner, held clear of the nav bar. The
+/// launcher (overlay_service.dart) passes this as the window's
+/// `startPosition` and the overlay isolate seeds its own drag tracking from
+/// the same function, so the two always agree without passing anything
+/// between isolates.
+Offset defaultBubbleAnchorDp(Size screenDp, double windowDp,
     {double marginDp = 12}) {
-  final marginPx = marginDp * devicePixelRatio;
-  final x = screenPhysicalPx.width - panelWidthPx - marginPx;
-  final y = screenPhysicalPx.height - panelHeightPx - marginPx * 4;
+  final x = screenDp.width - windowDp - marginDp;
+  final y = screenDp.height - windowDp - marginDp * 6; // clear of the nav bar
   return Offset(x < 0 ? 0 : x, y < 0 ? 0 : y);
 }
 
-Size centeredPanelSizePx(Size screenPhysicalPx) {
-  final widthPx = (screenPhysicalPx.width * 0.9).round();
-  final heightPx = (screenPhysicalPx.height / 3).round();
-  return Size(widthPx.toDouble(), heightPx.toDouble());
+/// Size (dp) of the expanded detail panel. Height is clamped so the panel
+/// stays readable on short screens without ever growing taller than the
+/// display it floats on.
+Size centeredPanelSizeDp(Size screenDp) {
+  final width = screenDp.width * 0.92;
+  var height = screenDp.height / 2.6;
+  if (height < 260) height = 260;
+  if (height > 420) height = 420;
+  final maxHeight = screenDp.height - 80;
+  if (maxHeight > 0 && height > maxHeight) height = maxHeight;
+  return Size(width, height);
 }
 
-Offset centeredPanelAnchorPx(
-    Size screenPhysicalPx, int panelWidthPx, int panelHeightPx) {
-  final x = (screenPhysicalPx.width - panelWidthPx) / 2;
-  final y = (screenPhysicalPx.height - panelHeightPx) / 2;
+/// Where the expanded panel opens (dp, from the top-left of the screen):
+/// dead centre, regardless of wherever the collapsed bubble was dragged to.
+/// The panel should be easy to find and read every time, not pop up in
+/// whatever hard-to-reach corner a tiny dragged bubble happened to land in.
+Offset centeredPanelAnchorDp(Size screenDp, Size panelDp) {
+  final x = (screenDp.width - panelDp.width) / 2;
+  final y = (screenDp.height - panelDp.height) / 2;
   return Offset(x < 0 ? 0 : x, y < 0 ? 0 : y);
 }
 
-// `flutter_overlay_window` sizes its native Android window in raw physical
-// pixels, while every widget above is laid out in logical pixels. Using a
-// fixed pixel guess (the old code used 160-170px collapsed / 320x460px
-// expanded) works only on the one density it was eyeballed on -- on higher
-// density phones the real content is bigger than the window, so parts of
-// it (the counter badge, the dismiss "x", the ping ring) get drawn *outside*
-// the window's actual bounds. Android never delivers touches outside a
-// window's bounds to that window, so those parts silently stop being
-// tappable and can look like they're "off-screen" even though they're
-// visually still there. Converting through the device's own pixel ratio
-// (plus a safety margin) keeps the native window exactly as big as what's
-// actually drawn into it, on any device.
-//
-// The safety margin has two parts:
-//  - [marginPx]: a small flat allowance for shadow bleed (blur/spread on
-//    the bubble's boxShadow), which doesn't scale with anything -- it's
-//    just soft pixels around the edge.
-//  - [logicalOvershoot]: extra *logical* content that paints outside the
-//    nominal `logicalSize` box, e.g. the ping-ring animation, which
-//    transform-scales up to `_ringMaxScale` (2.4x) of `_bubbleSize` --
-//    nearly 60% wider than the 86dp content box it lives in. This has to
-//    be converted through devicePixelRatio just like the base size,
-//    otherwise it under-shoots on exactly the high-density devices where
-//    it matters most. Omitting this term is what let the ring (and, once
-//    dragged near an edge, the touch target itself) get silently clipped
-//    by the native window -- looking like a visual "overflow" glitch and,
-//    separately, like the bubble going unresponsive/disappearing mid-drag.
-//
-// [maxPx], when provided, hard-clamps the result. This overlay never has
-// a legitimate reason to be bigger than the screen it floats on --
-// clamping is a safety net so a bad computation can never ask
-// WindowManager to allocate a buffer larger than the display (which is a
-// way to crash the compositor outright instead of failing gracefully).
-int overlayPhysicalPx(double logicalSize, double devicePixelRatio,
-    {double marginPx = 28, double logicalOvershoot = 0, int? maxPx}) {
-  final safeMargin = marginPx + logicalOvershoot * devicePixelRatio;
-  final raw = (logicalSize * devicePixelRatio + safeMargin).round();
+/// Converts a dp measurement to the physical pixels `showOverlay` expects.
+///
+/// [maxPx], when provided, hard-clamps the result. This overlay never has a
+/// legitimate reason to be bigger than the screen it floats on -- clamping
+/// is a safety net so a bad computation can never ask WindowManager to
+/// allocate a buffer larger than the display (a way to crash the compositor
+/// outright rather than fail gracefully).
+int overlayPhysicalPx(double dp, double devicePixelRatio, {int? maxPx}) {
+  final raw = (dp * devicePixelRatio).round();
   if (maxPx == null) return raw;
   return raw > maxPx ? maxPx : raw;
 }
@@ -231,24 +229,20 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
   final AudioPlayer _popPlayer = AudioPlayer();
 
-  // Current collapsed-bubble "home" position, in physical pixels. Seeded
-  // to the exact same bottom-right anchor the launcher (overlay_service.
-  // dart) used as the window's startPosition -- both sides compute it
-  // from the same formula/screen size, so they agree without either one
-  // needing to ask the plugin what the current position actually is.
+  // Current collapsed-bubble "home" position, in **dp** from the top-left
+  // of the screen. Seeded from the same [defaultBubbleAnchorDp] the
+  // launcher (overlay_service.dart) passes as the window's startPosition,
+  // so both sides agree without either needing to ask the plugin where the
+  // window actually is.
   //
   // Deliberately never calling FlutterOverlayWindow.getOverlayPosition()
-  // anywhere in this file: dragging is entirely tracked here in Dart by
-  // accumulating pan deltas, which is both simpler and sidesteps ever
-  // needing to trust a read-back position from the plugin.
-  late Offset _bubblePos;
-  late Size _screenPx;
+  // anywhere in this file: dragging is tracked here in Dart by
+  // accumulating pan deltas, which is simpler and sidesteps ever needing
+  // to trust a read-back position from the plugin.
+  late Offset _bubblePosDp;
+  late Size _screenDp;
   late double _dpr;
-  late int _collapsedSizePx;
-  late int _expandedWidthPx;
-  late int _expandedHeightPx;
-  late double _expandedWidthLogical;
-  late double _expandedHeightLogical;
+  late Size _panelDp;
 
   late final AnimationController
       _glowController; // continuous slow "alive" blink
@@ -266,17 +260,10 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     super.initState();
 
     final view = PlatformDispatcher.instance.views.first;
-    _screenPx = view.physicalSize;
     _dpr = view.devicePixelRatio;
-    _collapsedSizePx = overlayPhysicalPx(kOverlayCollapsedContentSize, _dpr,
-        logicalOvershoot: kOverlayCollapsedRingOvershoot,
-        maxPx: _screenPx.shortestSide.round());
-    _bubblePos = defaultBubbleAnchorPx(_screenPx, _collapsedSizePx, _dpr);
-    final expandedSize = centeredPanelSizePx(_screenPx);
-    _expandedWidthPx = expandedSize.width.round();
-    _expandedHeightPx = expandedSize.height.round();
-    _expandedWidthLogical = _expandedWidthPx / _dpr;
-    _expandedHeightLogical = _expandedHeightPx / _dpr;
+    _screenDp = view.physicalSize / _dpr;
+    _bubblePosDp = defaultBubbleAnchorDp(_screenDp, kOverlayCollapsedWindowDp);
+    _panelDp = centeredPanelSizeDp(_screenDp);
 
     _glowController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 1100))
@@ -400,44 +387,44 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
     if (next) {
       // Expanding: always resize and move to the centered panel slot,
-      // regardless of where the collapsed bubble was dragged.
-      final anchor =
-          centeredPanelAnchorPx(_screenPx, _expandedWidthPx, _expandedHeightPx);
+      // regardless of where the collapsed bubble was dragged. Resize first,
+      // then move -- moving a window that is about to change size just gets
+      // re-anchored by the resize, so the order matters.
+      await FlutterOverlayWindow.resizeOverlay(
+          _panelDp.width.round(), _panelDp.height.round(), true);
+      final anchor = centeredPanelAnchorDp(_screenDp, _panelDp);
       await FlutterOverlayWindow.moveOverlay(
           OverlayPosition(anchor.dx, anchor.dy));
-      await FlutterOverlayWindow.resizeOverlay(
-          _expandedWidthPx, _expandedHeightPx, false);
     } else {
       // Collapsing: shrink back down and return to wherever the driver
       // last dragged the bubble to (its "home"), not back to the default
       // corner -- the point of letting it be draggable is that it stays
       // put where they left it.
-      await FlutterOverlayWindow.resizeOverlay(
-          _collapsedSizePx, _collapsedSizePx, true);
+      await FlutterOverlayWindow.resizeOverlay(kOverlayCollapsedWindowDp.round(),
+          kOverlayCollapsedWindowDp.round(), true);
       await FlutterOverlayWindow.moveOverlay(
-          OverlayPosition(_bubblePos.dx, _bubblePos.dy));
+          OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy));
     }
   }
 
   /// Drags the collapsed bubble anywhere on screen. Position is tracked
-  /// entirely here by accumulating pan deltas (converted to physical
-  /// pixels) rather than ever reading the window's position back from the
-  /// plugin -- see the field doc on [_bubblePos] for why. Clamped to stay
+  /// entirely here by accumulating pan deltas rather than ever reading the
+  /// window's position back from the plugin -- see the field doc on
+  /// [_bubblePosDp] for why. Pan deltas are already in dp, which is exactly
+  /// what moveOverlay wants, so no conversion is applied. Clamped to stay
   /// fully on-screen so it can never be dragged out of reach.
   void _onBubblePanUpdate(DragUpdateDetails details) {
-    final dx = details.delta.dx * _dpr;
-    final dy = details.delta.dy * _dpr;
-    final maxX = _screenPx.width - _collapsedSizePx;
-    final maxY = _screenPx.height - _collapsedSizePx;
+    final maxX = _screenDp.width - kOverlayCollapsedWindowDp;
+    final maxY = _screenDp.height - kOverlayCollapsedWindowDp;
 
-    double nextX = _bubblePos.dx + dx;
-    double nextY = _bubblePos.dy + dy;
+    double nextX = _bubblePosDp.dx + details.delta.dx;
+    double nextY = _bubblePosDp.dy + details.delta.dy;
     if (nextX < 0) nextX = 0;
     if (maxX > 0 && nextX > maxX) nextX = maxX;
     if (nextY < 0) nextY = 0;
     if (maxY > 0 && nextY > maxY) nextY = maxY;
 
-    _bubblePos = Offset(nextX, nextY);
+    _bubblePosDp = Offset(nextX, nextY);
     FlutterOverlayWindow.moveOverlay(OverlayPosition(nextX, nextY));
   }
 
@@ -459,8 +446,8 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
           child: _expanded
               ? _GlassCard(
                   key: const ValueKey('expanded'),
-                  width: _expandedWidthLogical,
-                  height: _expandedHeightLogical,
+                  width: _panelDp.width,
+                  height: _panelDp.height,
                   update: _latest,
                   activeRide: _activeRide,
                   ridePaymentCount: _rideRidePaymentCount,
