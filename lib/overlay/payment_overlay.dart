@@ -214,7 +214,7 @@ class PaymentOverlayApp extends StatefulWidget {
 }
 
 class _PaymentOverlayAppState extends State<PaymentOverlayApp>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _expanded = false;
   OverlayPaymentUpdate? _latest;
   DateTime? _lastSeenPaymentAt;
@@ -270,6 +270,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     _screenDp = view.physicalSize / _dpr;
     _bubblePosDp = defaultBubbleAnchorDp(_screenDp, kOverlayCollapsedWindowDp);
     _panelDp = centeredPanelSizeDp(_screenDp);
+    WidgetsBinding.instance.addObserver(this);
 
     _glowController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 1100))
@@ -331,11 +332,72 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _overlaySub?.cancel();
     _glowController.dispose();
     _popController.dispose();
     _popPlayer.dispose();
     super.dispose();
+  }
+
+  /// Screen metrics were captured once in initState, which is wrong the
+  /// moment the device rotates or enters split-screen: the drag clamp
+  /// would keep the bubble inside the *old* bounds (stranding it
+  /// off-screen, or refusing to let it reach part of the new screen), and
+  /// the expanded panel would be sized and centred for the old geometry.
+  ///
+  /// Re-derive everything from the new metrics, re-clamp the bubble into
+  /// the new bounds, and re-apply whichever layout is currently showing.
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+
+    final view = PlatformDispatcher.instance.views.first;
+    final dpr = view.devicePixelRatio;
+    final screenDp = view.physicalSize / dpr;
+    if (screenDp.width <= 0 || screenDp.height <= 0) return;
+    if (screenDp == _screenDp && dpr == _dpr) return;
+
+    _dpr = dpr;
+    _screenDp = screenDp;
+
+    final maxX = screenDp.width - kOverlayCollapsedWindowDp;
+    final maxY = screenDp.height - kOverlayCollapsedWindowDp;
+    _bubblePosDp = Offset(
+      _bubblePosDp.dx.clamp(0.0, maxX > 0 ? maxX : 0.0),
+      _bubblePosDp.dy.clamp(0.0, maxY > 0 ? maxY : 0.0),
+    );
+
+    setState(() => _panelDp = centeredPanelSizeDp(screenDp));
+    _applyCurrentWindowGeometry();
+  }
+
+  /// Pushes the window size/position that matches the current expanded or
+  /// collapsed state. Shared by [_toggle] and [didChangeMetrics] so the two
+  /// can never drift apart.
+  Future<void> _applyCurrentWindowGeometry() async {
+    if (_expanded) {
+      // Resize first, then move -- moving a window that is about to change
+      // size just gets re-anchored by the resize, so the order matters.
+      //
+      // The trailing `false` is resizeOverlay's `enableDrag` flag, and it
+      // must stay false: natively it assigns straight into
+      // WindowSetup.enableDrag, re-arming the plugin's own drag handler
+      // that overlay_service.dart deliberately disabled at showOverlay time.
+      await FlutterOverlayWindow.resizeOverlay(
+          _panelDp.width.round(), _panelDp.height.round(), false);
+      final anchor = centeredPanelAnchorDp(_screenDp, _panelDp);
+      await FlutterOverlayWindow.moveOverlay(
+          OverlayPosition(anchor.dx, anchor.dy));
+    } else {
+      await FlutterOverlayWindow.resizeOverlay(
+          kOverlayCollapsedWindowDp.round(),
+          kOverlayCollapsedWindowDp.round(),
+          false);
+      await FlutterOverlayWindow.moveOverlay(
+          OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy));
+    }
   }
 
   Future<void> _loadActiveRide() async {
@@ -386,37 +448,17 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
   Future<void> _toggle() async {
     final next = !_expanded;
-    setState(() => _expanded = next);
-    if (next) {
-      setState(() =>
-          _unseenCount = 0); // panel opened -> those payments are now "seen"
-    }
-
-    if (next) {
-      // Expanding: always resize and move to the centered panel slot,
-      // regardless of where the collapsed bubble was dragged. Resize first,
-      // then move -- moving a window that is about to change size just gets
-      // re-anchored by the resize, so the order matters.
-      //
-      // The trailing `false` is resizeOverlay's `enableDrag` flag, and it
-      // must stay false: natively it assigns straight into
-      // WindowSetup.enableDrag, re-arming the plugin's own drag handler
-      // that overlay_service.dart deliberately disabled at showOverlay time.
-      await FlutterOverlayWindow.resizeOverlay(
-          _panelDp.width.round(), _panelDp.height.round(), false);
-      final anchor = centeredPanelAnchorDp(_screenDp, _panelDp);
-      await FlutterOverlayWindow.moveOverlay(
-          OverlayPosition(anchor.dx, anchor.dy));
-    } else {
-      // Collapsing: shrink back down and return to wherever the driver
-      // last dragged the bubble to (its "home"), not back to the default
-      // corner -- the point of letting it be draggable is that it stays
-      // put where they left it.
-      await FlutterOverlayWindow.resizeOverlay(kOverlayCollapsedWindowDp.round(),
-          kOverlayCollapsedWindowDp.round(), false);
-      await FlutterOverlayWindow.moveOverlay(
-          OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy));
-    }
+    setState(() {
+      _expanded = next;
+      // Panel opened -> those payments are now "seen".
+      if (next) _unseenCount = 0;
+    });
+    // Expanding always resizes and moves to the centred panel slot,
+    // regardless of where the collapsed bubble was dragged. Collapsing
+    // returns to wherever the driver last dragged the bubble to (its
+    // "home"), not the default corner -- the point of letting it be
+    // draggable is that it stays put where they left it.
+    await _applyCurrentWindowGeometry();
   }
 
   /// Drags the collapsed bubble anywhere on screen. Position is tracked
