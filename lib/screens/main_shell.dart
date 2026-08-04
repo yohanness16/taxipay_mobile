@@ -91,7 +91,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     try {
       final auth = context.read<AuthService>();
       final phone = await auth.phone;
-      if (phone == null) return;
+      if (phone == null || !mounted) return;
       final subscriptionManager = context.read<SubscriptionManager>();
       final snapshot = await context.read<SyncManager>().syncWithServer(phone);
       if (!mounted) return;
@@ -128,6 +128,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       body: Column(
         children: [
           if (_snapshot?.isNearExpiry == true) _ExpiryWarningBanner(snapshot: _snapshot!),
+          // Deliberately a plain IndexedStack with no transition wrapper.
+          // Every tab stays alive and keeps its scroll position and loaded
+          // data, which is the whole point of IndexedStack here; wrapping
+          // it in an AnimatedSwitcher keyed on the index would rebuild the
+          // entire subtree on every tab change and throw that away.
           Expanded(child: IndexedStack(index: _index, children: tabs)),
         ],
       ),
@@ -178,27 +183,34 @@ class _ExpiryWarningBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final days = snapshot.daysRemaining;
+    // The previous hand-picked dark-goldenrod/olive pair was tuned for a
+    // pale amber strip and turned muddy and low-contrast once the strip sat
+    // on a near-black surface, so both the icon and the label now derive
+    // from the accent itself and lift in dark mode.
+    final onAmber = context.isDark ? AppTheme.accentAmber : const Color(0xFF7A5B00);
+
     return Material(
-      color: AppTheme.accentAmber.withOpacity(0.16),
+      color: context.tintedSurface(AppTheme.accentAmber),
       child: InkWell(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => SubscriptionPaymentScreen(snapshot: snapshot)),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.s4, vertical: AppTheme.s2 + 2),
           child: Row(
             children: [
-              const Icon(Icons.error_outline_rounded, color: Color(0xFFB8860B), size: 18),
-              const SizedBox(width: 8),
+              Icon(Icons.error_outline_rounded, color: onAmber, size: 18),
+              const SizedBox(width: AppTheme.s2),
               Expanded(
                 child: Text(
                   days <= 0
                       ? 'Your subscription expires today — renew now to avoid losing access.'
                       : 'Subscription expires in $days day${days == 1 ? '' : 's'} — renew to keep access.',
-                  style: const TextStyle(color: Color(0xFF7A5B00), fontSize: 12.5, fontWeight: FontWeight.w600),
+                  style: TextStyle(color: onAmber, fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
               ),
-              const Icon(Icons.chevron_right, color: Color(0xFFB8860B), size: 18),
+              Icon(Icons.chevron_right, color: onAmber, size: 18),
             ],
           ),
         ),
@@ -281,44 +293,64 @@ class _AppDrawerState extends State<_AppDrawer> {
           children: [
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF00A651), Color(0xFF00C766)],
+              padding: const EdgeInsets.fromLTRB(
+                  AppTheme.s5, AppTheme.s6, AppTheme.s5, AppTheme.s5),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [AppTheme.primaryDark, AppTheme.primary],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
+                boxShadow: AppTheme.shadow(
+                    tint: AppTheme.primaryDark, opacity: 0.28, blur: 16, y: 6),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: Colors.white,
-                    child: Text(
-                      initials,
-                      style: const TextStyle(
-                        color: Color(0xFF00A651),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 20,
+                  Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 2),
+                    ),
+                    child: CircleAvatar(
+                      radius: 26,
+                      backgroundColor: Colors.white,
+                      child: Text(
+                        initials,
+                        style: const TextStyle(
+                          color: AppTheme.primaryDark,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 19,
+                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppTheme.s3),
                   Text(
                     (_name != null && _name!.isNotEmpty) ? _name! : 'Telebirr Driver',
-                    style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.3),
                   ),
                   if (_phone != null && _phone!.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(_phone!, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    Text(_phone!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white70, fontSize: 13)),
                   ],
                 ],
               ),
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    vertical: AppTheme.s2, horizontal: AppTheme.s2),
                 children: [
                   _DrawerItem(
                     icon: Icons.dashboard_outlined,
@@ -350,7 +382,7 @@ class _AppDrawerState extends State<_AppDrawer> {
                     label: strings.t('reports'),
                     onTap: () => goToTabAndClose(3),
                   ),
-                  const Divider(height: 24),
+                  const Divider(height: AppTheme.s6, indent: AppTheme.s4, endIndent: AppTheme.s4),
                   _DrawerItem(
                     icon: Icons.settings_outlined,
                     label: strings.t('settings'),
@@ -359,17 +391,17 @@ class _AppDrawerState extends State<_AppDrawer> {
                   _DrawerItem(
                     icon: Icons.logout,
                     label: strings.t('log_out'),
-                    color: Colors.redAccent,
+                    color: AppTheme.danger,
                     onTap: _confirmLogout,
                   ),
                 ],
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.all(16),
+            Padding(
+              padding: const EdgeInsets.all(AppTheme.s4),
               child: Text(
                 'Telebirr Driver Assistant',
-                style: TextStyle(color: Colors.grey, fontSize: 12),
+                style: TextStyle(color: context.faintText, fontSize: 12),
               ),
             ),
           ],
@@ -388,11 +420,23 @@ class _DrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w500)),
-      onTap: onTap,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.s2, vertical: 2),
+      child: ListTile(
+        leading: Icon(icon, color: color ?? context.subtleText, size: 22),
+        title: Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w600,
+            fontSize: 14.5,
+          ),
+        ),
+        onTap: onTap,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.rSm)),
+      ),
     );
   }
 }
