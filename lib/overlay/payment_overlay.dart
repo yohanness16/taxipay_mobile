@@ -260,6 +260,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   // outlives the State it closes over: a payment arriving after teardown
   // calls setState on a disposed State and throws.
   StreamSubscription<dynamic>? _overlaySub;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -294,6 +295,18 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
         CurvedAnimation(parent: _popController, curve: Curves.easeOut));
 
     _loadActiveRide();
+    _loadTodaySoFar();
+
+    // The overlay's contents are refreshed by pushes from the main app,
+    // but two things go stale on their own with no push to trigger them:
+    // the relative "2m ago" stamps, and the active-ride state (which the
+    // driver can change from the main app's UI while the bubble is up).
+    // A slow tick covers both without meaningfully costing anything.
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      setState(() {}); // re-render the relative timestamps
+      _loadActiveRide();
+    });
 
     _overlaySub = FlutterOverlayWindow.overlayListener.listen((event) {
       final update = OverlayPaymentUpdate.tryParse(event);
@@ -317,6 +330,51 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     });
   }
 
+  /// Seeds the panel with the day's payments already on record.
+  ///
+  /// The overlay is otherwise fed exclusively by pushes from the main app,
+  /// which only happen when a *new* payment SMS arrives. Starting the
+  /// bubble halfway through a shift therefore showed "Waiting for
+  /// payments…" and an empty list on top of a day that already had plenty
+  /// of them, until the next one happened to land. The overlay isolate has
+  /// its own DB access, so it can just read the current state itself.
+  ///
+  /// Deliberately does not touch [_unseenCount] or fire the pop/haptic:
+  /// these payments are pre-existing, not new arrivals. [_lastSeenPaymentAt]
+  /// is primed from the newest one so the first real push afterwards is
+  /// correctly recognised as new.
+  Future<void> _loadTodaySoFar() async {
+    try {
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day);
+      final payments = await _rideManager.getAllPayments(from: startOfDay);
+      if (!mounted || payments.isEmpty) return;
+
+      // Already newest-first (getAllPayments orders by received_at DESC).
+      final entries = payments
+          .take(30)
+          .map((p) => OverlayPaymentEntry(
+                amount: p.amount,
+                payerPhone: p.payerPhone,
+                payerName: p.payerName,
+                receivedAt: p.receivedAt,
+              ))
+          .toList();
+
+      setState(() {
+        _latest = OverlayPaymentUpdate(
+          todayCount: payments.length,
+          todayTotal: payments.fold<double>(0, (sum, p) => sum + p.amount),
+          payments: entries,
+        );
+        _lastSeenPaymentAt = entries.first.receivedAt;
+      });
+    } catch (_) {
+      // Non-fatal: the overlay still works, it just starts empty and
+      // fills in from the next push.
+    }
+  }
+
   /// Short "pop" played from inside the overlay itself the instant a new
   /// payment arrives -- distinct from (and in addition to) the system
   /// notification sound, since the overlay can be on-screen with the phone
@@ -334,6 +392,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _overlaySub?.cancel();
+    _refreshTimer?.cancel();
     _glowController.dispose();
     _popController.dispose();
     _popPlayer.dispose();
