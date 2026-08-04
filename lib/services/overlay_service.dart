@@ -57,29 +57,48 @@ class OverlayService {
     }
   }
 
-  /// Starts the floating bubble, collapsed, anchored bottom-right. It's
-  /// draggable anywhere on screen after that (implemented ourselves in
-  /// Dart via moveOverlay -- see payment_overlay.dart -- since the
+  /// Starts the floating bubble, collapsed, near the bottom-right corner.
+  /// It's draggable anywhere on screen after that (implemented ourselves
+  /// in Dart via moveOverlay -- see payment_overlay.dart -- since the
   /// plugin's own native `enableDrag` has the buffer-compounding bug
   /// documented below).
   ///
   /// Note the unit split, which the plugin does not make obvious: this
   /// call's width/height are **physical pixels** (the native side hands
-  /// them straight to WindowManager.LayoutParams), whereas the
-  /// resize/move calls the overlay makes later are in **dp**. See the
-  /// UNITS block at the top of payment_overlay.dart.
+  /// them straight to WindowManager.LayoutParams), whereas `startPosition`
+  /// and the resize/move calls the overlay makes later are in **dp**. See
+  /// the UNITS block at the top of payment_overlay.dart.
   Future<void> start() async {
     if (await isActive()) return;
     await requestNotificationPermission();
     final view = PlatformDispatcher.instance.views.first;
     final dpr = view.devicePixelRatio;
     final screenPx = view.physicalSize;
+    final screenDp = screenPx / dpr;
     final cap = screenPx.shortestSide.round();
     final sizePx = overlayPhysicalPx(kOverlayCollapsedWindowDp, dpr, maxPx: cap);
+    final startDp = defaultBubbleAnchorDp(screenDp, kOverlayCollapsedWindowDp);
     await FlutterOverlayWindow.showOverlay(
       height: sizePx,
       width: sizePx,
-      alignment: OverlayAlignment.bottomRight,
+      // topLeft (not bottomRight) is load-bearing. Android interprets
+      // LayoutParams.x/y relative to the window's gravity, so with a
+      // bottomRight gravity they are *insets from the bottom-right
+      // corner* -- x grows leftwards and y grows upwards. The overlay
+      // tracks the bubble in ordinary absolute top-left coordinates and
+      // feeds them straight to moveOverlay, so under bottomRight gravity
+      // dragging came out mirrored on both axes and the seeded "home"
+      // position landed nowhere near where it was drawn. Anchoring
+      // top-left makes x/y plain absolute screen coordinates, which is
+      // the space every calculation in payment_overlay.dart already uses.
+      alignment: OverlayAlignment.topLeft,
+      // Explicit start position, in dp, from the same helper the overlay
+      // isolate seeds its own drag tracking from. Previously this was
+      // omitted entirely and the position was left to gravity alone,
+      // while the overlay assumed a startPosition had been sent -- so the
+      // two disagreed from the very first frame and the bubble jumped the
+      // moment it was dragged.
+      startPosition: OverlayPosition(startDp.dx, startDp.dy),
       visibility: NotificationVisibility.visibilityPublic,
       overlayTitle: 'Telebirr Driver Assistant',
       overlayContent: 'Watching for payments',
