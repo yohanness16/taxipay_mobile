@@ -16,11 +16,7 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 subprojects {
-    project.evaluationDependsOn(":app")
-}
-
-subprojects {
-    plugins.withId("com.android.library") {
+    val configureAndroid = {
         val android = extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         if (android != null) {
             if (android.namespace.isNullOrEmpty()) {
@@ -44,6 +40,21 @@ subprojects {
         }
     }
 
+    plugins.withId("com.android.library") {
+        configureAndroid()
+    }
+    plugins.withId("com.android.application") {
+        configureAndroid()
+    }
+
+    if (state.executed) {
+        configureAndroid()
+    } else {
+        afterEvaluate {
+            configureAndroid()
+        }
+    }
+
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -54,6 +65,10 @@ subprojects {
         sourceCompatibility = JavaVersion.VERSION_17.toString()
         targetCompatibility = JavaVersion.VERSION_17.toString()
     }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
