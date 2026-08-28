@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../db/database_helper.dart';
 import '../localization/app_strings.dart';
+import '../services/driver_settings_service.dart';
 import '../services/overlay_service.dart';
 import '../services/sms_reader.dart';
 import '../theme/app_theme.dart';
@@ -143,6 +144,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with WidgetsBinding
     if (!mounted) return;
     final overlay = context.read<OverlayService>();
     if (await overlay.isPermissionGranted()) {
+      await context.read<DriverSettingsService>().setOverlayEnabled(true);
       await overlay.start();
     }
     if (!mounted) return;

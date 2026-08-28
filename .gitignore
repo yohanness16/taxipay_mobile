@@ -27,5 +27,6 @@ is instrumenting/
 # Hidden directories (folders starting with .)
 .*/
 
-# Exception: never ignore .git directory
+# Exceptions for git and github workflows
 !.git/
+!.github/

@@ -152,41 +152,51 @@ Future<void> _handleMessage(String body, {void Function(Payment payment)? onPaym
 }
 
 /// Saves a parsed ride payment (linking it to whatever ride is currently
-/// active, if any), fires the sound notification, and nudges the overlay
-/// bubble if it's on-screen. Returns the new local row id, or null if this
+/// active, or [explicitRideId] if specified), fires the sound notification
+/// (if [notify] is true), and nudges the overlay bubble if it's on-screen
+/// (if [pushOverlay] is true). Returns the new local row id, or null if this
 /// exact SMS body was already stored (duplicate).
-Future<int?> saveRidePayment(Payment payment) async {
+Future<int?> saveRidePayment(
+  Payment payment, {
+  bool notify = true,
+  int? explicitRideId,
+  bool pushOverlay = true,
+}) async {
   final rideManager = RideManager();
-  final activeRideId = await DatabaseHelper.instance.getActiveRideId();
-  final savedId = await rideManager.linkPaymentToRide(payment, rideId: activeRideId);
+  final targetRideId = explicitRideId ?? await DatabaseHelper.instance.getActiveRideId();
+  final savedId = await rideManager.linkPaymentToRide(payment, rideId: targetRideId);
   if (savedId == null) return null; // duplicate SMS, ignore
 
-  try {
-    await NotificationService.instance.showPaymentReceived(
-      amount: payment.amount,
-      payerPhone: payment.payerPhone,
-    );
-  } catch (_) {
-    // Non-fatal: the payment is already saved regardless of whether the
-    // notification/sound successfully shows on this device.
+  if (notify) {
+    try {
+      await NotificationService.instance.showPaymentReceived(
+        amount: payment.amount,
+        payerPhone: payment.payerPhone,
+      );
+    } catch (_) {
+      // Non-fatal: the payment is already saved regardless of whether the
+      // notification/sound successfully shows on this device.
+    }
   }
 
-  try {
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    final todayTotal = await rideManager.getTotalEarnings(from: startOfDay);
-    final todayPayments = await rideManager.getAllPayments(from: startOfDay);
+  if (pushOverlay) {
+    try {
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day);
+      final todayTotal = await rideManager.getTotalEarnings(from: startOfDay);
+      final todayPayments = await rideManager.getAllPayments(from: startOfDay, byArrival: true);
 
-    final overlay = OverlayService();
-    if (await overlay.isActive()) {
-      await overlay.pushPaymentUpdate(
-        todayCount: todayPayments.length,
-        todayTotal: todayTotal,
-        recentPayments: todayPayments,
-      );
+      final overlay = OverlayService();
+      if (await overlay.isActive()) {
+        await overlay.pushPaymentUpdate(
+          todayCount: todayPayments.length,
+          todayTotal: todayTotal,
+          recentPayments: todayPayments,
+        );
+      }
+    } catch (_) {
+      // Best-effort nudge to the bubble -- payment is already safely saved.
     }
-  } catch (_) {
-    // Best-effort nudge to the bubble -- payment is already safely saved.
   }
 
   return savedId;

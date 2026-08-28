@@ -98,6 +98,10 @@ class SubscriptionManager {
   }
 
   Future<SubscriptionSnapshot> checkSubscriptionStatus(String phone) async {
+    // An empty phone would build ".../subscription/check/" -- a different
+    // route that 404s -- so skip the pointless round trip and read the cache.
+    if (phone.trim().isEmpty) return _cachedSnapshot();
+
     if (await _isOnline()) {
       try {
         final res = await api.checkSubscription(phone);

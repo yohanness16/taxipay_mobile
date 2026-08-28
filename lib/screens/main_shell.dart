@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../localization/app_strings.dart';
 import '../services/auth_service.dart';
+import '../services/driver_settings_service.dart';
 import '../services/overlay_service.dart';
 import '../services/subscription_manager.dart';
 import '../services/sync_manager.dart';
@@ -75,10 +76,14 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   /// Onboarding already walked the driver through granting this -- so by
-  /// the time MainShell is reached, this just silently (re)starts the
-  /// bubble if it isn't already running. No dialog, no interruption.
+  /// the time MainShell is reached, this silently (re)starts the bubble if
+  /// it is enabled in settings and isn't already running. No dialog, no interruption.
   Future<void> _ensureOverlayReady() async {
     if (!mounted) return;
+    final driverSettings = context.read<DriverSettingsService>();
+    final enabled = await driverSettings.isOverlayEnabled();
+    if (!enabled || !mounted) return;
+
     final overlay = context.read<OverlayService>();
     if (await overlay.isPermissionGranted() && !await overlay.isActive()) {
       await overlay.start();

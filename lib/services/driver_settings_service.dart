@@ -11,9 +11,20 @@ class DriverSettingsService {
   static const _languageKey = 'language_code'; // 'en' | 'am'
   static const _serviceIntervalKmKey = 'service_interval_km';
   static const _lastServiceOdometerKey = 'last_service_odometer_km';
+  static const _overlayEnabledKey = 'overlay_enabled';
 
   static const double defaultDailyGoal = 500;
   static const double defaultServiceIntervalKm = 5000;
+  static const bool defaultOverlayEnabled = true;
+
+  Future<bool> isOverlayEnabled() async {
+    final v = await _db.getSetting(_overlayEnabledKey);
+    if (v == null) return defaultOverlayEnabled;
+    return v == 'true' || v == '1';
+  }
+
+  Future<void> setOverlayEnabled(bool enabled) =>
+      _db.setSetting(_overlayEnabledKey, enabled ? 'true' : 'false');
 
   Future<double> getDailyGoal() async {
     final v = await _db.getSetting(_dailyGoalKey);

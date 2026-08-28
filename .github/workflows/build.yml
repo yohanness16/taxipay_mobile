@@ -1,0 +1,49 @@
+name: Build Flutter Release
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Pull your repository code into the runner
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Java 17 for Android build
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # 3. Set up Flutter SDK
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      # 4. Install project dependencies
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # 5. Run unit tests
+      - name: Run Tests
+        run: flutter test
+
+      # 6. Build Android APK
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      # 7. Save the output files so you can download them from GitHub
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

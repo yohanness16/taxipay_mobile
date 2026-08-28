@@ -11,17 +11,25 @@ import '../db/database_helper.dart';
 import '../models/ride.dart';
 import '../services/ride_manager.dart';
 import '../widgets/app_logo.dart';
+import 'overlay_badge_state.dart';
 
 /// A single payment, as sent from the main app -> overlay. Deliberately
 /// tiny/serializable -- this travels over `FlutterOverlayWindow.shareData`
 /// as JSON.
 class OverlayPaymentEntry {
   OverlayPaymentEntry({
+    required this.id,
     required this.amount,
     required this.payerPhone,
     this.payerName,
     required this.receivedAt,
   });
+
+  /// The `payments` row id. This is what the overlay's unread badge counts
+  /// with -- see [OverlayBadgeState] for why identity beats timestamps here.
+  /// 0 stands for "unknown", which the badge ignores: SQLite's AUTOINCREMENT
+  /// starts at 1, so no real payment can collide with it.
+  final int id;
 
   final double amount;
   final String payerPhone;
@@ -29,6 +37,7 @@ class OverlayPaymentEntry {
   final DateTime receivedAt;
 
   Map<String, dynamic> toJson() => {
+        'id': id,
         'amount': amount,
         'payerPhone': payerPhone,
         'payerName': payerName,
@@ -39,6 +48,11 @@ class OverlayPaymentEntry {
     try {
       final map = raw as Map<String, dynamic>;
       return OverlayPaymentEntry(
+        // Falls back to 0 rather than rejecting the entry: an id we cannot
+        // read costs us the badge increment for that payment, but dropping
+        // the entry would also hide it from the list the driver is looking
+        // at, which is worse.
+        id: (map['id'] as num?)?.toInt() ?? 0,
         amount: (map['amount'] as num).toDouble(),
         payerPhone: map['payerPhone'] as String,
         payerName: map['payerName'] as String?,
@@ -219,12 +233,22 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _expanded = false;
   OverlayPaymentUpdate? _latest;
-  DateTime? _lastSeenPaymentAt;
 
-  // Badge shows payments received *since the panel was last opened*, not
-  // the running total-for-today -- that's what makes it read as a real
-  // "you have unread stuff" counter instead of a static daily count.
-  int _unseenCount = 0;
+  // Which payments the driver has already been shown, and how many they have
+  // not looked at yet. Badge shows payments received *since the panel was
+  // last opened*, not the running total-for-today -- that's what makes it
+  // read as a real "you have unread stuff" counter instead of a static daily
+  // count.
+  //
+  // Replaced by an identity check on the row id. The previous version tracked
+  // a `DateTime? _lastSeenPaymentAt` watermark and treated a push as new when
+  // its newest payment was `isAfter` that. Because the timestamp compared
+  // came out of the SMS body rather than the device clock, reordered
+  // delivery, same-second pairs and a skewed clock each made real payments
+  // compare as "not newer" and vanish from the badge entirely. See
+  // [OverlayBadgeState] for the full reasoning and
+  // test/overlay_badge_state_test.dart for the sequences that broke it.
+  OverlayBadgeState _badge = OverlayBadgeState();
 
   Ride? _activeRide;
   int _rideRidePaymentCount = 0;
@@ -242,10 +266,12 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   // anywhere in this file: dragging is tracked here in Dart by
   // accumulating pan deltas, which is simpler and sidesteps ever needing
   // to trust a read-back position from the plugin.
-  late Offset _bubblePosDp;
-  late Size _screenDp;
-  late double _dpr;
-  late Size _panelDp;
+  Offset _bubblePosDp = Offset.zero;
+  Size _screenDp = Size.zero;
+  double _dpr = 1.0;
+  Size _panelDp = Size.zero;
+  bool _metricsReady = false;
+  bool _isMovePending = false;
 
   late final AnimationController
       _glowController; // continuous slow "alive" blink
@@ -264,16 +290,30 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   StreamSubscription<dynamic>? _overlaySub;
   Timer? _refreshTimer;
 
+  // Serialises everything that reads or writes [_badge].
+  //
+  // Three sources touch it and two of them are asynchronous: restoring the
+  // persisted count, seeding today's history from SQLite, and pushes
+  // arriving from the main app. Left unsequenced they interleave -- a push
+  // landing mid-seed had its increment overwritten when the seed's
+  // `setState` completed, so the badge lost a payment that had already
+  // pinged. Chaining them means each step observes the finished result of
+  // the one before it, whatever order they were kicked off in.
+  Future<void> _badgeQueue = Future.value();
+
+  void _enqueueBadgeWork(Future<void> Function() work) {
+    _badgeQueue = _badgeQueue.then((_) => work()).catchError((_) {
+      // A failed step must not poison the chain -- the next payment still
+      // has to be counted.
+    });
+  }
+
   @override
   void initState() {
     super.initState();
-
-    final view = PlatformDispatcher.instance.views.first;
-    _dpr = view.devicePixelRatio;
-    _screenDp = view.physicalSize / _dpr;
-    _bubblePosDp = defaultBubbleAnchorDp(_screenDp, kOverlayCollapsedWindowDp);
-    _panelDp = centeredPanelSizeDp(_screenDp);
     WidgetsBinding.instance.addObserver(this);
+
+    _tryInitMetrics();
 
     _glowController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 1100))
@@ -297,7 +337,12 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
         CurvedAnimation(parent: _popController, curve: Curves.easeOut));
 
     _loadActiveRide();
-    _loadTodaySoFar();
+
+    // Order matters and is enforced by the queue, not by luck: the stored
+    // count has to be back before today's history is seeded, or the seed
+    // would decide every payment on record is unseen.
+    _enqueueBadgeWork(_restoreBadgeState);
+    _enqueueBadgeWork(_loadTodaySoFar);
 
     // The overlay's contents are refreshed by pushes from the main app,
     // but two things go stale on their own with no push to trigger them:
@@ -311,25 +356,128 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     });
 
     _overlaySub = FlutterOverlayWindow.overlayListener.listen((event) {
-      final update = OverlayPaymentUpdate.tryParse(event);
-      if (update == null || !mounted) return;
-
-      final newest =
-          update.payments.isEmpty ? null : update.payments.first.receivedAt;
-      final isGenuinelyNew = newest != null &&
-          (_lastSeenPaymentAt == null || newest.isAfter(_lastSeenPaymentAt!));
-
-      setState(() => _latest = update);
-
-      if (isGenuinelyNew) {
-        _lastSeenPaymentAt = newest;
-        HapticFeedback.mediumImpact();
-        _popController.forward(from: 0);
-        setState(() => _unseenCount++);
-        _playPopSound();
-        _refreshRideTotals();
-      }
+      _handleOverlayEvent(event);
     });
+  }
+
+  void _tryInitMetrics() {
+    try {
+      final views = PlatformDispatcher.instance.views;
+      if (views.isNotEmpty) {
+        final view = views.first;
+        final dpr = view.devicePixelRatio;
+        final physical = view.physicalSize;
+        if (physical.width > 0 && physical.height > 0 && dpr > 0) {
+          _dpr = dpr;
+          _screenDp = physical / dpr;
+          _bubblePosDp = defaultBubbleAnchorDp(_screenDp, kOverlayCollapsedWindowDp);
+          _panelDp = centeredPanelSizeDp(_screenDp);
+          _metricsReady = true;
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _handleOverlayEvent(dynamic event) {
+    if (event == null) return;
+    try {
+      final map = event is String
+          ? (jsonDecode(event) as Map<String, dynamic>?)
+          : (event is Map ? Map<String, dynamic>.from(event) : null);
+
+      if (map != null && map['type'] == 'overlay_shown') {
+        _handleOverlayShown();
+        return;
+      }
+    } catch (_) {}
+
+    final update = OverlayPaymentUpdate.tryParse(event);
+    if (update != null) {
+      _enqueueBadgeWork(() => _handlePush(update));
+    }
+  }
+
+  void _handleOverlayShown() {
+    if (!mounted) return;
+    setState(() {
+      _expanded = false;
+    });
+    if (!_glowController.isAnimating) {
+      _glowController.repeat(reverse: true);
+    }
+    if (_metricsReady) {
+      _applyCurrentWindowGeometry();
+    }
+    _loadActiveRide();
+    _enqueueBadgeWork(_loadTodaySoFar);
+  }
+
+  /// Reads back the badge state persisted by a previous run of this isolate.
+  ///
+  /// The overlay engine is torn down and rebuilt independently of the bubble
+  /// being on screen, so an in-memory count silently reset to zero at
+  /// moments the driver had no way to predict. Persisting it means "3
+  /// payments you haven't looked at" stays 3.
+  Future<void> _restoreBadgeState() async {
+    try {
+      final storedHighWater =
+          await _dbHelper.getSetting(OverlayBadgeState.highWaterIdKey);
+      final storedUnseen =
+          await _dbHelper.getSetting(OverlayBadgeState.unseenCountKey);
+      if (!mounted) return;
+      final restored = OverlayBadgeState.fromSettings(
+        highWaterId: storedHighWater,
+        unseenCount: storedUnseen,
+      );
+      setState(() {
+        _badge = restored;
+        // Absent settings mean this isolate has never run before, which is
+        // the one case where today's existing payments should be treated as
+        // history rather than as a backlog of missed arrivals.
+        _hasBadgeHistory = storedHighWater != null;
+      });
+    } catch (_) {
+      // Non-fatal: the badge starts at zero, which is the same thing that
+      // happened on every launch before it was persisted at all.
+    }
+  }
+
+  /// False until [_restoreBadgeState] finds a previously stored mark. Decides
+  /// how [_loadTodaySoFar] treats the payments already on record: as seen
+  /// history (first ever run), or as arrivals that happened while this
+  /// isolate was not alive to notice them (every run after that).
+  bool _hasBadgeHistory = false;
+
+  Future<void> _persistBadgeState() async {
+    try {
+      await _dbHelper.setSetting(
+          OverlayBadgeState.highWaterIdKey, _badge.highWaterId.toString());
+      await _dbHelper.setSetting(
+          OverlayBadgeState.unseenCountKey, _badge.unseenCount.toString());
+    } catch (_) {
+      // Non-fatal: the count is still correct for this run, it just won't
+      // survive the isolate being torn down.
+    }
+  }
+
+  /// Handles one push from the main app: refresh the panel, and alert only
+  /// for payments the driver has genuinely not seen.
+  Future<void> _handlePush(OverlayPaymentUpdate update) async {
+    if (!mounted) return;
+
+    final fresh = _badge.register(update.payments.map((p) => p.id));
+
+    setState(() => _latest = update);
+    if (fresh == 0) return;
+
+    // One alert for the push, not one per payment -- a bulk arrival should
+    // move the badge by the right amount without firing the sound N times.
+    setState(() {});
+    HapticFeedback.mediumImpact();
+    _popController.forward(from: 0);
+    _playPopSound();
+    await _persistBadgeState();
+    await _refreshRideTotals();
   }
 
   /// Seeds the panel with the day's payments already on record.
@@ -341,21 +489,26 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   /// of them, until the next one happened to land. The overlay isolate has
   /// its own DB access, so it can just read the current state itself.
   ///
-  /// Deliberately does not touch [_unseenCount] or fire the pop/haptic:
-  /// these payments are pre-existing, not new arrivals. [_lastSeenPaymentAt]
-  /// is primed from the newest one so the first real push afterwards is
-  /// correctly recognised as new.
+  /// Never fires the pop/haptic/sound: nothing here *just* happened, even in
+  /// the catch-up case below. It can still move the badge, though, because
+  /// "arrived while the overlay engine was dead" is exactly the situation an
+  /// unread counter exists for.
   Future<void> _loadTodaySoFar() async {
     try {
       final now = DateTime.now();
       final startOfDay = DateTime(now.year, now.month, now.day);
-      final payments = await _rideManager.getAllPayments(from: startOfDay);
+      // byArrival: the overlay's list is a feed of what turned up on this
+      // device, in that order -- and a payment transacted before midnight
+      // but delivered after it belongs in today's feed, which filtering on
+      // received_at would exclude.
+      final payments =
+          await _rideManager.getAllPayments(from: startOfDay, byArrival: true);
       if (!mounted || payments.isEmpty) return;
 
-      // Already newest-first (getAllPayments orders by received_at DESC).
       final entries = payments
-          .take(30)
+          .take(OverlayService.maxSharedPayments)
           .map((p) => OverlayPaymentEntry(
+                id: p.id ?? 0,
                 amount: p.amount,
                 payerPhone: p.payerPhone,
                 payerName: p.payerName,
@@ -363,14 +516,21 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
               ))
           .toList();
 
+      final ids = entries.map((e) => e.id);
+      if (_hasBadgeHistory) {
+        _badge.register(ids);
+      } else {
+        _badge.markSeen(ids);
+      }
+
       setState(() {
         _latest = OverlayPaymentUpdate(
           todayCount: payments.length,
           todayTotal: payments.fold<double>(0, (sum, p) => sum + p.amount),
           payments: entries,
         );
-        _lastSeenPaymentAt = entries.first.receivedAt;
       });
+      await _persistBadgeState();
     } catch (_) {
       // Non-fatal: the overlay still works, it just starts empty and
       // fills in from the next push.
@@ -401,12 +561,7 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     super.dispose();
   }
 
-  /// Screen metrics were captured once in initState, which is wrong the
-  /// moment the device rotates or enters split-screen: the drag clamp
-  /// would keep the bubble inside the *old* bounds (stranding it
-  /// off-screen, or refusing to let it reach part of the new screen), and
-  /// the expanded panel would be sized and centred for the old geometry.
-  ///
+  /// Screen metrics are derived and re-derived whenever the display metrics change.
   /// Re-derive everything from the new metrics, re-clamp the bubble into
   /// the new bounds, and re-apply whichever layout is currently showing.
   @override
@@ -414,30 +569,41 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     super.didChangeMetrics();
     if (!mounted) return;
 
-    final view = PlatformDispatcher.instance.views.first;
-    final dpr = view.devicePixelRatio;
-    final screenDp = view.physicalSize / dpr;
-    if (screenDp.width <= 0 || screenDp.height <= 0) return;
-    if (screenDp == _screenDp && dpr == _dpr) return;
+    try {
+      final views = PlatformDispatcher.instance.views;
+      if (views.isEmpty) return;
+      final view = views.first;
+      final dpr = view.devicePixelRatio;
+      final physical = view.physicalSize;
+      if (physical.width <= 0 || physical.height <= 0 || dpr <= 0) return;
 
-    _dpr = dpr;
-    _screenDp = screenDp;
+      final screenDp = physical / dpr;
+      _dpr = dpr;
+      _screenDp = screenDp;
 
-    final maxX = screenDp.width - kOverlayCollapsedWindowDp;
-    final maxY = screenDp.height - kOverlayCollapsedWindowDp;
-    _bubblePosDp = Offset(
-      _bubblePosDp.dx.clamp(0.0, maxX > 0 ? maxX : 0.0),
-      _bubblePosDp.dy.clamp(0.0, maxY > 0 ? maxY : 0.0),
-    );
+      final maxX = screenDp.width - kOverlayCollapsedWindowDp;
+      final maxY = screenDp.height - kOverlayCollapsedWindowDp;
 
-    setState(() => _panelDp = centeredPanelSizeDp(screenDp));
-    _applyCurrentWindowGeometry();
+      if (!_metricsReady) {
+        _bubblePosDp = defaultBubbleAnchorDp(screenDp, kOverlayCollapsedWindowDp);
+        _metricsReady = true;
+      } else {
+        _bubblePosDp = Offset(
+          _bubblePosDp.dx.clamp(0.0, maxX > 0 ? maxX : 0.0),
+          _bubblePosDp.dy.clamp(0.0, maxY > 0 ? maxY : 0.0),
+        );
+      }
+
+      setState(() => _panelDp = centeredPanelSizeDp(screenDp));
+      _applyCurrentWindowGeometry();
+    } catch (_) {}
   }
 
   /// Pushes the window size/position that matches the current expanded or
   /// collapsed state. Shared by [_toggle] and [didChangeMetrics] so the two
   /// can never drift apart.
   Future<void> _applyCurrentWindowGeometry() async {
+    if (!_metricsReady) return;
     if (_expanded) {
       // Resize first, then move -- moving a window that is about to change
       // size just gets re-anchored by the resize, so the order matters.
@@ -509,10 +675,15 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
 
   Future<void> _toggle() async {
     final next = !_expanded;
+    if (next) {
+      _glowController.stop();
+      _badge.clearUnseen();
+      await _persistBadgeState();
+    } else {
+      _glowController.repeat(reverse: true);
+    }
     setState(() {
       _expanded = next;
-      // Panel opened -> those payments are now "seen".
-      if (next) _unseenCount = 0;
     });
     // Expanding always resizes and moves to the centred panel slot,
     // regardless of where the collapsed bubble was dragged. Collapsing
@@ -528,7 +699,11 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
   /// [_bubblePosDp] for why. Pan deltas are already in dp, which is exactly
   /// what moveOverlay wants, so no conversion is applied. Clamped to stay
   /// fully on-screen so it can never be dragged out of reach.
+  ///
+  /// Coalesces move updates to avoid hammering the IPC channel with 60-120
+  /// calls per second.
   void _onBubblePanUpdate(DragUpdateDetails details) {
+    if (!_metricsReady) return;
     final maxX = _screenDp.width - kOverlayCollapsedWindowDp;
     final maxY = _screenDp.height - kOverlayCollapsedWindowDp;
 
@@ -540,10 +715,33 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
     if (maxY > 0 && nextY > maxY) nextY = maxY;
 
     _bubblePosDp = Offset(nextX, nextY);
-    FlutterOverlayWindow.moveOverlay(OverlayPosition(nextX, nextY));
+
+    if (!_isMovePending) {
+      _isMovePending = true;
+      scheduleMicrotask(() {
+        _isMovePending = false;
+        if (!mounted) return;
+        FlutterOverlayWindow.moveOverlay(
+          OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy),
+        );
+      });
+    }
   }
 
-  Future<void> _closeCompletely() => FlutterOverlayWindow.closeOverlay();
+  void _onBubblePanEnd(DragEndDetails details) {
+    if (!_metricsReady) return;
+    FlutterOverlayWindow.moveOverlay(
+      OverlayPosition(_bubblePosDp.dx, _bubblePosDp.dy),
+    );
+  }
+
+  Future<void> _closeCompletely() async {
+    setState(() {
+      _expanded = false;
+    });
+    _glowController.stop();
+    await FlutterOverlayWindow.closeOverlay();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -575,8 +773,9 @@ class _PaymentOverlayAppState extends State<PaymentOverlayApp>
                   key: const ValueKey('collapsed'),
                   onTap: _toggle,
                   onPanUpdate: _onBubblePanUpdate,
+                  onPanEnd: _onBubblePanEnd,
                   child: _Bubble(
-                    unseenCount: _unseenCount,
+                    unseenCount: _badge.unseenCount,
                     rideActive: _activeRide != null,
                     glow: _glowController,
                     popScale: _popScale,
@@ -638,36 +837,52 @@ class _Bubble extends StatelessWidget {
               ),
             ),
           ),
-          // Continuous, clearly-visible "alive" blink -- a fast breathing
-          // glow ring plus a pulsing halo, so the bubble reads as active
-          // even with zero new payments (not just a flat circle).
+          // Continuous, clearly-visible "alive" blink -- hardware-accelerated
+          // static shadow with opacity-only pulse (avoids expensive 60fps blur re-rasterization)
           AnimatedBuilder(
             animation: Listenable.merge([glow, popScale]),
             builder: (context, child) {
               final glowValue = glow.value;
               return Transform.scale(
                 scale: popScale.value,
-                child: Container(
-                  width: _bubbleSize,
-                  height: _bubbleSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
-                    border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.5), width: 2),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4)),
-                      BoxShadow(
-                        color: _brandGreen.withValues(alpha: 0.35 + glowValue * 0.5),
-                        blurRadius: 14 + glowValue * 16,
-                        spreadRadius: 1 + glowValue * 4,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Opacity(
+                      opacity: (0.35 + glowValue * 0.65).clamp(0.0, 1.0),
+                      child: Container(
+                        width: _bubbleSize,
+                        height: _bubbleSize,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _brandGreen.withValues(alpha: 0.6),
+                              blurRadius: 22,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                  child: child,
+                    ),
+                    Container(
+                      width: _bubbleSize,
+                      height: _bubbleSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.5), width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4)),
+                        ],
+                      ),
+                      child: child,
+                    ),
+                  ],
                 ),
               );
             },

@@ -34,10 +34,10 @@ class AuthService {
       deviceId: deviceId,
     );
     await _persistSession(
-      token: res['token'] as String,
+      token: _requireToken(res),
       phone: phone,
       name: name,
-      driverId: res['driverId'] as int,
+      driverId: _requireDriverId(res),
     );
   }
 
@@ -45,11 +45,35 @@ class AuthService {
     final deviceId = await _deviceIdentity.getId();
     final res = await api.login(phone: phone, password: password, deviceId: deviceId);
     await _persistSession(
-      token: res['token'] as String,
+      token: _requireToken(res),
       phone: phone,
       name: res['name']?.toString() ?? '',
-      driverId: res['driverId'] as int,
+      driverId: _requireDriverId(res),
     );
+  }
+
+  /// Reads `token` defensively. A blind `res['token'] as String` threw a raw
+  /// TypeError (not an ApiException) whenever the field was missing, which
+  /// slipped past the UI's `on ApiException` handler and surfaced as an
+  /// opaque "something went wrong" with the real cause swallowed.
+  String _requireToken(Map<String, dynamic> res) {
+    final token = res['token'];
+    if (token is! String || token.isEmpty) {
+      throw ApiException('Sign-in succeeded but no session token was returned.', res['_statusCode'] as int? ?? 0);
+    }
+    return token;
+  }
+
+  /// `driverId` arrives as a JSON number; decoding can yield int or double
+  /// depending on the payload, so normalise instead of casting straight to
+  /// int (which throws on a double).
+  int _requireDriverId(Map<String, dynamic> res) {
+    final raw = res['driverId'];
+    final id = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+    if (id == null) {
+      throw ApiException('Sign-in succeeded but no account id was returned.', res['_statusCode'] as int? ?? 0);
+    }
+    return id;
   }
 
   Future<void> _persistSession({

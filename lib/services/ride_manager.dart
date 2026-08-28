@@ -1,6 +1,7 @@
 import '../db/database_helper.dart';
 import '../models/payment.dart';
 import '../models/ride.dart';
+import 'sms_reader.dart';
 
 class RideManager {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
@@ -26,8 +27,11 @@ class RideManager {
   /// toward the same totals as Telebirr payments (getTotalEarnings,
   /// getAllPayments, reports) since they all just read from the same
   /// `payments` table regardless of method.
+  ///
+  /// Routes through [saveRidePayment] with `notify: false` so the overlay
+  /// totals and badge update immediately, without firing an unnecessary
+  /// system notification sound for a fare the driver just manually entered.
   Future<int> logCashPayment({required double amount, String? note, int? rideId}) async {
-    final db = await _dbHelper.database;
     final payment = Payment(
       amount: amount,
       payerPhone: 'Cash',
@@ -35,9 +39,12 @@ class RideManager {
       receivedAt: DateTime.now(),
       method: PaymentMethod.cash,
     );
-    return db.insert('payments', payment.toMap()
-      ..remove('id')
-      ..['ride_id'] = rideId ?? await _dbHelper.getActiveRideId());
+    final savedId = await saveRidePayment(
+      payment,
+      notify: false,
+      explicitRideId: rideId,
+    );
+    return savedId ?? 0;
   }
 
   /// Saves an incoming Telebirr payment and (optionally) links it to a ride.
@@ -90,23 +97,46 @@ class RideManager {
     return rows.map(Payment.fromMap).toList();
   }
 
-  Future<List<Payment>> getAllPayments({DateTime? from, DateTime? to}) async {
+  /// Payments in a date range, newest first.
+  ///
+  /// [byArrival] switches which of the two timestamps on a payment is used,
+  /// for both the range filter and the ordering:
+  ///
+  ///  * `false` (default) uses `received_at` -- the transaction time printed
+  ///    inside the Telebirr SMS. This is what earnings, reports, history and
+  ///    CSV export want: "the money that moved on this date", in the order
+  ///    the driver remembers it happening.
+  ///  * `true` uses `arrived_at` -- when the row was written on this device.
+  ///    This is what the overlay wants. Using `received_at` there had two
+  ///    consequences: the list order disagreed with the order things actually
+  ///    popped up, and a payment transacted just before midnight but
+  ///    delivered just after it fell outside "today" entirely, so it never
+  ///    entered the overlay's window and was never counted as an arrival.
+  ///
+  /// `arrived_at` is read as a plain column rather than
+  /// `IFNULL(arrived_at, received_at)` so the index on it stays usable. That
+  /// is safe because the v4 migration backfills every pre-existing row and
+  /// [Payment.toMap] always writes the column, so there is no path that
+  /// produces a NULL.
+  Future<List<Payment>> getAllPayments(
+      {DateTime? from, DateTime? to, bool byArrival = false}) async {
     final db = await _dbHelper.database;
+    final column = byArrival ? 'arrived_at' : 'received_at';
     final where = <String>[];
     final args = <Object?>[];
     if (from != null) {
-      where.add('received_at >= ?');
+      where.add('$column >= ?');
       args.add(from.toIso8601String());
     }
     if (to != null) {
-      where.add('received_at <= ?');
+      where.add('$column <= ?');
       args.add(to.toIso8601String());
     }
     final rows = await db.query(
       'payments',
       where: where.isEmpty ? null : where.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
-      orderBy: 'received_at DESC',
+      orderBy: '$column DESC',
     );
     return rows.map(Payment.fromMap).toList();
   }

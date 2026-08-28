@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -81,51 +82,40 @@ class OverlayService {
     await FlutterOverlayWindow.showOverlay(
       height: sizePx,
       width: sizePx,
-      // topLeft (not bottomRight) is load-bearing. Android interprets
-      // LayoutParams.x/y relative to the window's gravity, so with a
-      // bottomRight gravity they are *insets from the bottom-right
-      // corner* -- x grows leftwards and y grows upwards. The overlay
-      // tracks the bubble in ordinary absolute top-left coordinates and
-      // feeds them straight to moveOverlay, so under bottomRight gravity
-      // dragging came out mirrored on both axes and the seeded "home"
-      // position landed nowhere near where it was drawn. Anchoring
-      // top-left makes x/y plain absolute screen coordinates, which is
-      // the space every calculation in payment_overlay.dart already uses.
       alignment: OverlayAlignment.topLeft,
-      // Explicit start position, in dp, from the same helper the overlay
-      // isolate seeds its own drag tracking from. Previously this was
-      // omitted entirely and the position was left to gravity alone,
-      // while the overlay assumed a startPosition had been sent -- so the
-      // two disagreed from the very first frame and the bubble jumped the
-      // moment it was dragged.
       startPosition: OverlayPosition(startDp.dx, startDp.dy),
       visibility: NotificationVisibility.visibilityPublic,
       overlayTitle: 'Telebirr Driver Assistant',
       overlayContent: 'Watching for payments',
-      // enableDrag is deliberately OFF. Its native drag-handling path
-      // re-applies a logical-to-physical pixel conversion to the window's
-      // OWN already-physical size on every relayout frame while dragging,
-      // compounding it each frame (270px -> 759px -> 2134px -- each step
-      // is roughly x2.81, this device's exact pixel ratio, applied again
-      // and again). That runaway buffer size is what crashes the native
-      // compositor. This is inside the plugin's own drag code, not
-      // anything in this Dart layer. Dragging is instead implemented in
-      // payment_overlay.dart using moveOverlay() directly, which only
-      // changes position, never size, so it can't trigger this bug.
       enableDrag: false,
       positionGravity: PositionGravity.none,
       flag: OverlayFlag.defaultFlag,
     ).timeout(const Duration(seconds: 8));
+
+    // Signal the overlay engine (which is cached and may retain state across
+    // show/hide cycles) that the window is freshly shown, so it can reset
+    // any expanded state back to collapsed and re-apply current geometry.
+    try {
+      await FlutterOverlayWindow.shareData(jsonEncode({'type': 'overlay_shown'}));
+    } catch (_) {
+      // Best-effort signal
+    }
   }
 
   Future<void> stop() => FlutterOverlayWindow.closeOverlay();
 
   /// Call this every time a new payment is parsed from SMS. [recentPayments]
-  /// should be the day's payments, most-recent-first -- this method takes
-  /// care of trimming it down to [maxSharedPayments] before sending. Safe to
-  /// call even if the overlay isn't currently active (callers should still
-  /// guard with `isActive()` first to avoid the wasted work, but nothing
-  /// breaks if they don't).
+  /// should be the day's payments, most-recently-*arrived* first (i.e. from
+  /// `getAllPayments(byArrival: true)`) -- this method takes care of trimming
+  /// it down to [maxSharedPayments] before sending. Safe to call even if the
+  /// overlay isn't currently active (callers should still guard with
+  /// `isActive()` first to avoid the wasted work, but nothing breaks if they
+  /// don't).
+  ///
+  /// Each entry carries its `payments` row id, which is what the overlay's
+  /// unread badge counts with. Passing payments that have not been inserted
+  /// yet (id == null) means they cannot be counted as arrivals, so always
+  /// push rows read back from the database, not freshly-constructed models.
   Future<void> pushPaymentUpdate({
     required int todayCount,
     required double todayTotal,
@@ -138,6 +128,7 @@ class OverlayService {
       payments: recentPayments
           .take(maxSharedPayments)
           .map((p) => OverlayPaymentEntry(
+                id: p.id ?? 0,
                 amount: p.amount,
                 payerPhone: p.payerPhone,
                 payerName: p.payerName,

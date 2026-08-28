@@ -8,7 +8,7 @@ class DatabaseHelper {
   DatabaseHelper._internal();
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
-  static const int _dbVersion = 3;
+  static const int _dbVersion = 4;
 
   static Database? _db;
 
@@ -52,6 +52,13 @@ class DatabaseHelper {
         payer_name TEXT,
         transaction_id TEXT,
         received_at TEXT NOT NULL,
+        -- Device-clock stamp for when the row was created, as opposed to
+        -- received_at which is the timestamp printed inside the Telebirr
+        -- SMS body. Declared nullable purely so this matches the shape the
+        -- v4 upgrade path can produce (SQLite cannot add a NOT NULL column
+        -- without a constant default). Dart always populates it, and
+        -- Payment.fromMap falls back to received_at if it is ever missing.
+        arrived_at TEXT,
         telebirr_message TEXT,
         payment_method TEXT NOT NULL DEFAULT 'telebirr',
         synced INTEGER DEFAULT 0,
@@ -100,6 +107,11 @@ class DatabaseHelper {
       CREATE UNIQUE INDEX idx_payments_message ON payments (telebirr_message)
       WHERE telebirr_message IS NOT NULL;
     ''');
+
+    // The overlay's "what is new since I last looked" query orders by
+    // arrival, and the reports/history screens order by transaction time.
+    await db.execute(
+        'CREATE INDEX idx_payments_arrived_at ON payments (arrived_at);');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -120,6 +132,24 @@ class DatabaseHelper {
     }
     if (oldVersion < 3) {
       await db.execute("ALTER TABLE payments ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'telebirr'");
+    }
+    if (oldVersion < 4) {
+      // Separates "when the money moved" (received_at, read out of the SMS
+      // text) from "when this device saw it" (arrived_at, device clock at
+      // insert). The overlay's new-payment detection needs the latter:
+      // received_at can go backwards between two consecutive arrivals when
+      // SMS delivery reorders, which made genuinely new payments compare as
+      // "not newer" and get silently dropped from the badge.
+      //
+      // Added nullable because SQLite cannot add a NOT NULL column without a
+      // constant default, and the correct value is per-row. Backfilled from
+      // received_at immediately, which is the best estimate available for
+      // history that predates the column.
+      await db.execute('ALTER TABLE payments ADD COLUMN arrived_at TEXT');
+      await db.execute(
+          'UPDATE payments SET arrived_at = received_at WHERE arrived_at IS NULL');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_payments_arrived_at ON payments (arrived_at)');
     }
   }
 

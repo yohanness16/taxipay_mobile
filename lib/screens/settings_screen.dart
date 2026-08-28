@@ -114,6 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     if (_overlayBusy) return; // ignore rapid re-taps while a toggle is in flight
     setState(() => _overlayBusy = true);
     final overlay = context.read<OverlayService>();
+    final driverSettings = context.read<DriverSettingsService>();
 
     try {
       if (!_overlayPermissionGranted) {
@@ -132,7 +133,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
 
       if (_overlayActive) {
         await overlay.stop();
+        await driverSettings.setOverlayEnabled(false);
       } else {
+        await driverSettings.setOverlayEnabled(true);
         await overlay.start();
       }
 
@@ -160,6 +163,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     try {
       final smsReader = context.read<SmsReader>();
       final rideManager = context.read<RideManager>();
+      final overlay = context.read<OverlayService>();
 
       final granted = await smsReader.requestPermissions();
       if (!granted) {
@@ -173,8 +177,28 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       final found = await smsReader.scanInbox();
       int added = 0;
       for (final payment in found) {
-        final id = await rideManager.linkPaymentToRide(payment);
+        final id = await saveRidePayment(
+          payment,
+          notify: false,
+          pushOverlay: false,
+        );
         if (id != null) added++;
+      }
+
+      if (added > 0) {
+        try {
+          final now = DateTime.now();
+          final startOfDay = DateTime(now.year, now.month, now.day);
+          final todayTotal = await rideManager.getTotalEarnings(from: startOfDay);
+          final todayPayments = await rideManager.getAllPayments(from: startOfDay, byArrival: true);
+          if (await overlay.isActive()) {
+            await overlay.pushPaymentUpdate(
+              todayCount: todayPayments.length,
+              todayTotal: todayTotal,
+              recentPayments: todayPayments,
+            );
+          }
+        } catch (_) {}
       }
 
       if (!mounted) return;
