@@ -9,6 +9,7 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 import '../db/database_helper.dart';
 import '../models/ride.dart';
+import '../services/overlay_service.dart';
 import '../services/ride_manager.dart';
 import '../widgets/app_logo.dart';
 import 'overlay_badge_state.dart';
