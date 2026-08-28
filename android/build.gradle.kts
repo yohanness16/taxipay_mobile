@@ -20,7 +20,7 @@ subprojects {
 }
 
 subprojects {
-    afterEvaluate {
+    plugins.withId("com.android.library") {
         val android = extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         if (android != null && android.namespace.isNullOrEmpty()) {
             val manifest = file("src/main/AndroidManifest.xml")
