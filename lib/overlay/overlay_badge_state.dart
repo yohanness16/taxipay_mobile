@@ -59,11 +59,11 @@ class OverlayBadgeState {
   int register(Iterable<int> ids) {
     if (ids.isEmpty) return 0;
 
-    var maxId = _highWaterId;
+    var maxBatchId = 0;
     var fresh = 0;
     for (final id in ids) {
       if (id > _highWaterId) fresh++;
-      if (id > maxId) maxId = id;
+      if (id > maxBatchId) maxBatchId = id;
     }
 
     // The id space went backwards: every id offered is below the mark we
@@ -73,12 +73,14 @@ class OverlayBadgeState {
     // exists instead of holding a mark no future insert can ever exceed
     // (which would silence the badge permanently), and count nothing, since
     // a restore is not an arrival.
-    if (fresh == 0 && maxId < _highWaterId) {
-      _highWaterId = maxId;
+    if (fresh == 0 && maxBatchId < _highWaterId) {
+      _highWaterId = maxBatchId;
       return 0;
     }
 
-    _highWaterId = maxId;
+    if (maxBatchId > _highWaterId) {
+      _highWaterId = maxBatchId;
+    }
     _unseenCount += fresh;
     return fresh;
   }
